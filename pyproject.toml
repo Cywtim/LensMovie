@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lensmovie"
+version = "0.1.0"
+description = "A Python CLI application for LensMovie."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Cyan", email = "47052542+Cywtim@users.noreply.github.com" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+lensmovie = "lensmovie.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
