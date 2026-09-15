@@ -185,25 +185,93 @@ class _SourceCard(_EntryCard):
         )
 
 
-class ConfigPanel(QScrollArea):
-    """Scrollable panel managing all lens + source entries and display settings."""
+class _CardListPanel(QScrollArea):
+    """Base scrollable panel managing one list of entry cards (lenses or sources)."""
 
-    configChanged = pyqtSignal()
+    changed = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, title: str, parent=None):
         super().__init__(parent)
         self.setWidgetResizable(True)
-        self._lenses: list[_LensCard] = []
-        self._sources: list[_SourceCard] = []
+        self._cards: list[_EntryCard] = []
 
         body = QWidget()
         self._root = QVBoxLayout(body)
         self._root.setContentsMargins(6, 6, 6, 6)
         self.setWidget(body)
 
-        # Display settings group
-        disp = QGroupBox("Display")
-        dform = QFormLayout(disp)
+        self._title = QLabel(f"<b>{title}</b>")
+        self._root.addWidget(self._title)
+        self._root.addStretch(1)
+
+    def _insert_card(self, card):
+        # Insert just before the trailing stretch (always last item).
+        stretch = self._root.itemAt(self._root.count() - 1)
+        idx = self._root.count() - 1 if stretch.spacerItem() is not None else self._root.count()
+        self._root.insertWidget(idx, card)
+
+    def _add_card(self, card):
+        self._cards.append(card)
+        self._insert_card(card)
+        card.changed.connect(self._emit)
+        card.remove_requested.connect(self._remove_card)
+
+    def _remove_card(self, card):
+        if len(self._cards) <= 1:
+            return  # keep at least one entry
+        self._cards.remove(card)
+        card.setParent(None)
+        card.deleteLater()
+        self._emit()
+
+    def _emit(self, *a):
+        self.changed.emit()
+
+
+class LensesPanel(_CardListPanel):
+    """Right hand column (top): the list of lens planes."""
+
+    def __init__(self, parent=None):
+        super().__init__("Lenses", parent=parent)
+        btn = QPushButton("+ Add lens")
+        btn.clicked.connect(self._add_lens)
+        self._root.insertWidget(self._root.count() - 1, btn)
+        self._add_lens()
+
+    def _add_lens(self):
+        self._add_card(_LensCard())
+
+    def lens_list(self):
+        return [c.to_params() for c in self._cards]
+
+
+class SourcesPanel(_CardListPanel):
+    """Right hand column (bottom): the list of sources."""
+
+    def __init__(self, parent=None):
+        super().__init__("Sources", parent=parent)
+        btn = QPushButton("+ Add source")
+        btn.clicked.connect(self._add_source)
+        self._root.insertWidget(self._root.count() - 1, btn)
+        self._add_source()
+
+    def _add_source(self):
+        self._add_card(_SourceCard())
+
+    def source_list(self):
+        return [c.to_params() for c in self._cards]
+
+
+class DisplayBar(QWidget):
+    """A compact horizontal strip of display settings (grid, colormap, stretch)."""
+
+    changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(4, 2, 4, 2)
+
         self._numpix = QSpinBox()
         self._numpix.setRange(60, 400)
         self._numpix.setValue(150)
@@ -214,71 +282,19 @@ class ConfigPanel(QScrollArea):
         self._stretch = QComboBox()
         self._stretch.addItems(["log", "linear"])
         self._stretch.currentTextChanged.connect(self._emit)
-        dform.addRow("numPix:", self._numpix)
-        dform.addRow("colormap:", self._cmap)
-        dform.addRow("stretch:", self._stretch)
-        self._root.addWidget(disp)
 
-        self._lens_title = QLabel("<b>Lenses</b>")
-        self._root.addWidget(self._lens_title)
-        self._add_lens_btn = QPushButton("+ Add lens")
-        self._add_lens_btn.clicked.connect(lambda: self._add_lens())
-        self._root.addWidget(self._add_lens_btn)
+        lay.addWidget(QLabel("numPix:"))
+        lay.addWidget(self._numpix)
+        lay.addSpacing(12)
+        lay.addWidget(QLabel("colormap:"))
+        lay.addWidget(self._cmap)
+        lay.addSpacing(12)
+        lay.addWidget(QLabel("stretch:"))
+        lay.addWidget(self._stretch)
+        lay.addStretch(1)
 
-        self._source_title = QLabel("<b>Sources</b>")
-        self._root.addWidget(self._source_title)
-        self._add_src_btn = QPushButton("+ Add source")
-        self._add_src_btn.clicked.connect(lambda: self._add_source())
-        self._root.addWidget(self._add_src_btn)
-
-        self._root.addStretch(1)
-
-        # Start with one of each.
-        self._add_lens()
-        self._add_source()
-
-    # ------------------------------------------------------------- management
-    def _insert_lens(self, card):
-        """Insert a lens card just before the Sources section."""
-        idx = self._root.indexOf(self._source_title)
-        self._root.insertWidget(idx, card)
-
-    def _insert_source(self, card):
-        """Insert a source card just before the stretch (end of the list)."""
-        stretch = self._root.itemAt(self._root.count() - 1)
-        idx = self._root.count() - 1 if stretch.spacerItem() is not None else self._root.count()
-        self._root.insertWidget(idx, card)
-
-    def _add_lens(self):
-        card = _LensCard()
-        self._lenses.append(card)
-        self._insert_lens(card)
-        card.changed.connect(self._emit)
-        card.remove_requested.connect(self._remove_entry)
-
-    def _add_source(self):
-        card = _SourceCard()
-        self._sources.append(card)
-        self._insert_source(card)
-        card.changed.connect(self._emit)
-        card.remove_requested.connect(self._remove_entry)
-
-    def _remove_entry(self, card):
-        if isinstance(card, _LensCard):
-            if len(self._lenses) <= 1:
-                return  # keep at least one lens
-            self._lenses.remove(card)
-        else:
-            if len(self._sources) <= 1:
-                return
-            self._sources.remove(card)
-        card.setParent(None)
-        card.deleteLater()
-        self._emit()
-
-    # ------------------------------------------------------------- data model
     def _emit(self, *a):
-        self.configChanged.emit()
+        self.changed.emit()
 
     def display(self) -> dict:
         return {
@@ -287,13 +303,3 @@ class ConfigPanel(QScrollArea):
             "stretch": self._stretch.currentText(),
         }
 
-    def as_config(self) -> lc.Config:
-        lenses = [c.to_params() for c in self._lenses]
-        sources = [c.to_params() for c in self._sources]
-        d = self.display()
-        return lc.Config(
-            lenses=lenses,
-            sources=sources,
-            num_pix=d["num_pix"],
-            delta_pix=0.05,
-        )

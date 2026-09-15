@@ -34,18 +34,22 @@ interactive 3D scene.
 
 ## Window layout (single window)
 ```
-+-----------------------------------------------------------------------------+
-|                          3D scene (Vispy)  — full width bar                  |
-+--------------------------+--------------------------+------------------------+
-|  Fermat potential (2D)   |   Lens image (2D)        |  Lenses (config list):  |
-|                          |   + critical curve       |    lens 1: model sel    |
-|  Time delay (2D)         |   + caustic              |    + params + redshift  |
-|                          |                          |    lens 2: ... (add/rm) |
-|                          |                          |  Sources (config list): |
-|                          |                          |    source 1: pos/shape  |
-|                          |                          |    + redshift (add/rm)  |
-+--------------------------+--------------------------+------------------------+
++---------------------------------------------------------------------------+
+|              3D scene (Vispy) — edge-on, full-width bar                    |
+|         observer --------- lens plane(s) --------- source                  |
++---------------------------------------------------------------------------+
+|   numPix [..]    colormap [..]    stretch [..]      (display strip)        |
++---------------------+---------------------+-------------------------------+
+|  Fermat potential   |  Lens image          |  Lenses config                |
+|                     |  (+ image positions) |   lens1: model/params/z       |
++---------------------+---------------------+-------------------------------+
+|  Time delay         |  Critical curve      |  Sources config               |
+|                     |  + caustic           |   source1: pos/shape/z        |
++---------------------+---------------------+-------------------------------+
 ```
+
+All four 2D canvases share one figure size and an Expanding size policy so the
+grid stays aligned and each canvas fills its cell on resize.
 
 ## Parameters (per lens / per source)
 Each lens plane carries: model type, theta_E, shear g1/g2, center x/y, **redshift**.
@@ -58,11 +62,11 @@ LensMovie/
   app/
     __init__.py
     main.py        # entry point
-    main_window.py # main window: top 3D bar, left 2D cols, right config panel
-    controls.py    # multi-lens + multi-source configurable panel (add/remove)
-    plotting.py    # matplotlib canvases: image/cc/caustic, Fermat potential, time delay
+    main_window.py # main window: top 3D bar, display strip, 2x3 grid
+    controls.py    # LensesPanel + SourcesPanel + DisplayBar (add/remove entries)
+    plotting.py    # matplotlib canvases: FieldCanvas, ImageCanvas, CurvesCanvas
     lensing_calc.py# lenstronomy physics: multi-plane sim, arrival time (Fermat), cc/caustic, image positions
-    scene3d.py     # vispy -> 3D scene (top bar)
+    scene3d.py     # vispy -> edge-on 3D scene (top bar)
   pyproject.toml
   DESIGN.md
   README.md

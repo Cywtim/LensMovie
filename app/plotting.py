@@ -1,8 +1,9 @@
 """Matplotlib canvases embedded in Qt for the 2D views.
 
-Four functions of the lensing config are shown:
-  * ``ImageCanvas``  — the lensed image with critical curve + caustic + images.
-  * ``FieldCanvas``  — a generic 2D field (Fermat potential, time delay).
+Grid cells map to canvases as follows:
+  * ``FieldCanvas``   — a generic 2D field (Fermat potential, time delay).
+  * ``ImageCanvas``   — the lensed image with per-source image positions.
+  * ``CurvesCanvas``  — the critical curve + caustic curves only.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import numpy as np
 from matplotlib import cm
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from PyQt5.QtWidgets import QSizePolicy
 
 
 def _extent(num_pix, delta_pix):
@@ -27,18 +29,40 @@ _COLORMAPS = {
     "turbo": cm.turbo,
 }
 
+# All canvases share one figure size so every grid cell gets the same size hint,
+# which is what keeps the grid aligned.
+_FIGSIZE = (3.0, 3.0)
 
-class FieldCanvas(FigureCanvas):
+
+class _MplCanvas(FigureCanvas):
+    """Base matplotlib canvas that expands to fill its layout cell.
+
+    Setting an Ignored/Expanding size policy and a tiny minimum size lets the
+    canvas grow or shrink with the window instead of pinning the grid to the
+    figure's natural size.
+    """
+
+    def __init__(self, parent=None):
+        self._figure = Figure(figsize=_FIGSIZE, tight_layout=True)
+        super().__init__(self._figure)
+        self.setParent(parent)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(80, 80)
+        self._ax = self._figure.add_subplot(111)
+
+    def _style_axes(self, title):
+        self._ax.set_title(title, fontsize=9)
+        self._ax.set_xlabel("arcsec", fontsize=8)
+        self._ax.set_ylabel("arcsec", fontsize=8)
+        self._ax.tick_params(labelsize=7)
+
+
+class FieldCanvas(_MplCanvas):
     """Shows a 2D field with a colorbar; data is updated in place (fast)."""
 
     def __init__(self, title, parent=None):
-        self._figure = Figure(figsize=(3.4, 3.4), tight_layout=True)
-        super().__init__(self._figure)
-        self.setParent(parent)
-        self._ax = self._figure.add_subplot(111)
-        self._ax.set_title(title, fontsize=9)
-        self._ax.set_xlabel("arcsec")
-        self._ax.set_ylabel("arcsec")
+        super().__init__(parent=parent)
+        self._style_axes(title)
         self._im = None
         self._cb = None
 
@@ -65,6 +89,7 @@ class FieldCanvas(FigureCanvas):
             self._im.set_extent(bounds)
             self._im.set_cmap(_COLORMAPS.get(colormap, cm.magma))
             self._im.set_clim(-vmax if sym else view.min(), vmax)
+        self._ax.set_aspect("equal", adjustable="box")
         self.draw_idle()
 
     def clear(self):
@@ -73,29 +98,20 @@ class FieldCanvas(FigureCanvas):
             self.draw_idle()
 
 
-class ImageCanvas(FigureCanvas):
-    """Lensed image with overlaid critical curve, caustic and image positions."""
+class ImageCanvas(_MplCanvas):
+    """Lensed image with per-source image-position markers (no curves)."""
 
-    # Colours for per-source image-position markers.
     _IMG_COLORS = ["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7"]
 
     def __init__(self, parent=None):
-        self._figure = Figure(figsize=(3.6, 3.6), tight_layout=True)
-        super().__init__(self._figure)
-        self.setParent(parent)
-        self._ax = self._figure.add_subplot(111)
-        self._ax.set_title("Lensed image", fontsize=9)
-        self._ax.set_xlabel("arcsec")
-        self._ax.set_ylabel("arcsec")
+        super().__init__(parent=parent)
+        self._style_axes("Lens image")
         self._im = None
-        self._cc = None
-        self._caustic = None
         self._markers = []
         self._cb = None
 
-    def update_image(self, image, num_pix, delta_pix, cc_ra, cc_dec,
-                     caustic_ra, caustic_dec, image_positions, colormap="magma",
-                     stretch="log"):
+    def update_image(self, image, num_pix, delta_pix, image_positions,
+                     colormap="magma", stretch="log"):
         data = np.asarray(image, dtype=float)
         if stretch == "log" and data.min() >= 0:
             vmin = max(data.max() * 1e-5, np.finfo(float).eps)
@@ -109,41 +125,65 @@ class ImageCanvas(FigureCanvas):
                                        cmap=_COLORMAPS.get(colormap, cm.magma),
                                        interpolation="nearest")
             self._cb = self._figure.colorbar(self._im, ax=self._ax, fraction=0.046, pad=0.04)
-            (self._cc,) = self._ax.plot([], [], lw=1.0, color="cyan", label="critical curve")
-            (self._caustic,) = self._ax.plot([], [], lw=1.0, ls="--", color="red", label="caustic")
         else:
             self._im.set_data(view)
             self._im.set_extent(bounds)
             self._im.set_cmap(_COLORMAPS.get(colormap, cm.magma))
             self._im.set_clim(view.min(), view.max())
 
-        # Clear previous image-position markers.
+        # Refresh image-position markers.
         for m in self._markers:
             try:
                 m.remove()
             except Exception:
                 pass
         self._markers = []
-        num = len(image_positions)
         for i, (x, y, _) in enumerate(image_positions):
             if len(x):
                 (mk,) = self._ax.plot(x, y, "o", ms=5, mec="k", mfc=self._IMG_COLORS[i % 8])
                 self._markers.append(mk)
-
-        self._draw_curve(self._cc, cc_ra, cc_dec)
-        self._draw_curve(self._caustic, caustic_ra, caustic_dec)
-        self._ax.legend(loc="upper right", fontsize=7, framealpha=0.6)
+        self._ax.set_aspect("equal", adjustable="box")
         self.draw_idle()
-
-    @staticmethod
-    def _draw_curve(line, xs, ys):
-        if len(xs):
-            line.set_data(xs, ys)
-            line.set_visible(True)
-        else:
-            line.set_visible(False)
 
     def clear(self):
         if self._im is not None:
             self._im.set_data(np.zeros_like(self._im.get_array()))
             self.draw_idle()
+
+
+class CurvesCanvas(_MplCanvas):
+    """Critical curve + caustic plotted on an empty sky grid."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self._style_axes("Critical curve + caustic")
+        self._ax.grid(True, alpha=0.3)
+        (self._cc,) = self._ax.plot([], [], lw=1.6, color="cyan", label="critical curve")
+        (self._caustic,) = self._ax.plot([], [], lw=1.6, ls="--", color="red", label="caustic")
+        self._ax.legend(loc="upper right", fontsize=7, framealpha=0.6)
+
+    def update_curves(self, cc_ra, cc_dec, caustic_ra, caustic_dec):
+        self._set_curve(self._cc, cc_ra, cc_dec)
+        self._set_curve(self._caustic, caustic_ra, caustic_dec)
+
+        # Equal aspect and stable limits around the sky region.
+        coords = [np.asarray(a, dtype=float) for a in (cc_ra, cc_dec, caustic_ra, caustic_dec)]
+        all_pts = np.concatenate([c for c in coords if c.size]) if any(c.size for c in coords) else None
+        if all_pts is not None and all_pts.size:
+            lo, hi = float(all_pts.min()), float(all_pts.max())
+            pad = max((hi - lo) * 0.2, 0.3)
+            self._ax.set_xlim(lo - pad, hi + pad)
+            self._ax.set_ylim(lo - pad, hi + pad)
+        else:
+            self._ax.set_xlim(-2.5, 2.5)
+            self._ax.set_ylim(-2.5, 2.5)
+        self._ax.set_aspect("equal", adjustable="box")
+        self.draw_idle()
+
+    @staticmethod
+    def _set_curve(line, xs, ys):
+        if len(xs):
+            line.set_data(xs, ys)
+            line.set_visible(True)
+        else:
+            line.set_visible(False)

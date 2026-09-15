@@ -1,14 +1,25 @@
-"""Vispy 3D scene: lens mass planes + light-ray schematic.
+"""Vispy 3D scene, edge-on line-of-sight schematic.
 
-The scene is a full-width bar at the top of the window. It renders:
-  * one translucent mass plane per lens, its height/colour encoding the SIS-like
-    surface density, and its position along the view axis scaled by its redshift
-    (so lenses at different redshifts stack in depth);
-  * a set of light-ray strips per source that bend through the lens planes on
-    their way from the source side to the observer side.
+Coordinate convention (a genuine side / edge-on view):
 
-Construction may fail if no GL context is available; ``MainWindow`` handles that
-by degrading to 2D-only.
+        observer                                      source
+          |                                             |
+   x = -L +---------+---------+---------+---------+---------+ x = +L
+    (left)     lens1   (z sorted      lens2)          lens3   (right)
+               \                                            /
+    light      \                                          /
+    travels      \_______________________________________/   rays bend in (y,z)
+    right-to-left    at each lens plane
+
+  * the line of sight runs along **X** (horizontal and wider than tall);
+  * the sky (angular) coordinates are **Y** and **Z** — each lens is a mass
+    disk lying in the y-z plane, centred at (x_lens, 0, 0);
+  * x_lens is scaled by the lens redshift between the observer (-x) and the
+    source (+x), so lenses at higher redshift sit closer to the source;
+  * light rays travel from the source side (+x) to the observer side (-x),
+    bending in (y,z) at each lens plane.
+
+Construction may fail if no GL context is available; MainWindow degrades to 2D.
 """
 
 from __future__ import annotations
@@ -18,7 +29,6 @@ import numpy as np
 import vispy
 from vispy import scene
 
-# Force the PyQt5 backend so the canvas embeds as a Qt widget.
 vispy.use("pyqt5")
 
 from vispy.scene import visuals  # noqa: E402
@@ -27,19 +37,18 @@ from . import lensing_calc as lc
 
 
 class Scene3D:
-    def __init__(self, size=(760, 320)):
+    def __init__(self, size=(1080, 300)):
         self.canvas = scene.SceneCanvas(keys="interactive", size=size, show=False,
-                                        title="LensMovie 3D")
+                                        title="LensMovie 3D — observer / lens / source")
         self.view = self.canvas.central_widget.add_view()
         self.view.camera = "turntable"
         self.view.bgcolor = "#111318"
 
-        self._half = 2.6
-        self._z_obs = 2.0
-        self._z_src = -2.0
+        # Geometry bounds at init time (updated per frame too).
+        self._L = 2.4            # half line-of-sight (x) extent
+        self._half = 2.6         # sky (y/z) half extent
         self._n_rays = 5
 
-        self._stress = []  # stress-test attribute placeholder
         self._disks = []
         self._rays = []
         self._markers = None
@@ -49,21 +58,37 @@ class Scene3D:
     # ------------------------------------------------------------------ axes
     def _add_axes(self):
         h = self._half
+        L = self._L
         axis_defs = [
-            ([-h, 0, 0, h, 0, 0], (1.0, 0.4, 0.4, 0.8)),
+            # line of sight (X): observer --- source
+            ([-L, 0, 0, L, 0, 0], (1.0, 0.4, 0.4, 0.9)),
+            # sky axes Y and Z
             ([0, -h, 0, 0, h, 0], (0.4, 1.0, 0.4, 0.8)),
-            ([0, 0, -self._z_src, 0, 0, self._z_obs], (0.4, 0.6, 1.0, 0.8)),
+            ([0, 0, -h, 0, 0, h], (0.4, 0.6, 1.0, 0.8)),
         ]
         self._axis = []
+        labels = ["observer", "source"]
         for pts, color in axis_defs:
             self._axis.append(
                 visuals.Line(pos=np.array(pts).reshape(2, 3), color=color,
                              parent=self.view.scene)
             )
+        # observer / source markers on the line of sight
+        self._obs_marker = visuals.Markers(
+            pos=np.array([[-L, 0, 0]]), face_color=(1.0, 0.4, 0.4, 1.0),
+            size=12, parent=self.view.scene)
+        self._src_marker = visuals.Markers(
+            pos=np.array([[L, 0, 0]]), face_color=(0.4, 1.0, 0.4, 1.0),
+            size=12, parent=self.view.scene)
+        self._labels = []
+        self._labels.append(visuals.Text("observer", pos=(-L, -0.25, 0), color=(1, 0.6, 0.6, 1),
+                                         font_size=12, parent=self.view.scene))
+        self._labels.append(visuals.Text("source", pos=(L, 0.25, 0), color=(0.6, 1.0, 0.6, 1),
+                                         font_size=12, parent=self.view.scene))
 
     # ------------------------------------------------------------------ update
     def update_scene(self, config: lc.Config, result: lc.SimResult):
-        """Rebuild the scene from the current config and its computed result."""
+        """Rebuild the edge-on scene from the current config and result."""
         for v in (self._disks, self._rays, self._markers):
             items = v if isinstance(v, list) else [v]
             for item in items:
@@ -74,35 +99,36 @@ class Scene3D:
                         pass
         self._disks, self._rays, self._markers = [], [], None
 
+        zs = sorted({l.redshift for l in config.lenses}) or [0.5]
         z_max = max([l.redshift for l in config.lenses] + [0.3])
 
-        # One mass plane per lens, depth offset ∝ redshift.
-        for i, lens in enumerate(config.lenses):
-            self._disks.append(self._make_mass_plane(lens, z_max))
-        self._add_rays(config, result)
-        # Reset camera centre to middle of the stack.
+        # One lens mass disk per lens, perpendicular to the line of sight (y-z
+        # plane), positioned along X by its redshift.
+        for lens in config.lenses:
+            self._disks.append(self._make_lens_disk(lens, z_max))
+        self._add_rays(config)
         self.view.camera.center = (0, 0, 0)
         self.canvas.update()
 
-    # ------------------------------------------------------------------ mass
-    def _make_mass_plane(self, lens, z_max):
-        n = 64
+    def _x_of_redshift(self, z, z_max):
+        """Map a redshift to an X (line-of-sight) position between observer and source."""
+        f = max(0.0, min(1.0, z / z_max))
+        return -self._L * 0.9 + f * (2 * self._L * 0.9)
+
+    # ------------------------------------------------------------------ lens
+    def _make_lens_disk(self, lens, z_max):
+        n = 48
         h = self._half
-        x = np.linspace(-h, h, n)
-        X, Y = np.meshgrid(x, x)
-        R = np.hypot(X - lens.center_x, Y - lens.center_y)
-        eps = 0.05
+        y = np.linspace(-h, h, n)
+        Y, Z = np.meshgrid(y, y)              # sky plane
+        R = np.hypot(Y - lens.center_y, Z - lens.center_x)
+        eps = 0.06
         dens = 1.0 / np.maximum(R, eps) ** 2
         dens = dens / dens.max()
-        Z = 0.12 * dens * (lens.theta_E / 1.0)
-        # Depth offset along the observation axis proportional to redshift.
-        z_plane = self._z_src + (lens.redshift / z_max) * (
-            self._z_obs - self._z_src
-        ) - 0.6
+        x_lens = self._x_of_redshift(lens.redshift, z_max)
 
-        positions = np.stack(
-            [X.ravel(), Y.ravel(), (Z + z_plane).ravel()], axis=-1
-        ).astype(np.float32)
+        positions = np.stack([np.full_like(R.ravel(), x_lens),
+                              Y.ravel(), Z.ravel()], axis=-1).astype(np.float32)
         faces = _grid_faces(n, n)
 
         rgb = np.zeros((n * n, 3))
@@ -113,46 +139,50 @@ class Scene3D:
                             vertex_colors=rgb.astype(np.float32),
                             shading="smooth", parent=self.view.scene)
         mesh.set_gl_state(blend=True, depth_test=True)
-        mesh.opacity = 0.7
+        mesh.opacity = 0.55
         return mesh
 
     # ------------------------------------------------------------------ rays
-    def _add_rays(self, config, result):
+    def _add_rays(self, config):
         cmap = [(1.0, 0.6, 0.2), (0.2, 1.0, 0.6), (0.4, 0.8, 1.0),
                 (1.0, 0.4, 0.9), (0.9, 0.9, 0.3)]
-        z_start, z_end = self._z_src, self._z_obs
+        lenses = sorted(config.lenses, key=lambda l: l.redshift)
+        z_max = max([l.redshift for l in config.lenses] + [0.3])
+
         self._rays = []
-        source_marker_pos = []
+        markers = []
         for si, source in enumerate(config.sources):
-            sx, sy = source.center_x, source.center_y
-            offsets = np.linspace(-0.5, 0.5, self._n_rays)
+            sy, sz = source.center_y, source.center_x
+            offsets = np.linspace(-0.55, 0.55, self._n_rays)
             for i, off in enumerate(offsets):
-                x0, y0 = sx + off, sy + 0.12 * (i - self._n_rays // 2)
-                # Total deflection: use total alpha at image pos from result if
-                # available, else a heuristic bend toward the mass centroid.
-                dx = 0 - x0
-                dy = 0 - y0
-                dist = max(float(np.hypot(dx, dy)), 1e-3)
-                bend = min(_total_theta_e(config.lenses), 1.5)
-                x1 = x0 + (dx / dist) * bend
-                y1 = y0 + (dy / dist) * bend
-                pts = np.array([
-                    [x0, y0, z_start],
-                    [x0, y0, -0.35],
-                    [x1, y1, 0.35],
-                    [x1, y1, z_end],
-                ])
+                y0 = sy + off
+                z0 = sz + 0.12 * (i - self._n_rays // 2)
+                # Walk from source side to observer side, deflecting in (y,z)
+                # at each lens plane by an amount ~ each lens theta_E inward.
+                ys, zs = y0, z0
+                pts = [[self._L, ys, zs]]  # source plane (right)
+                for lens in lenses:
+                    x_lens = self._x_of_redshift(lens.redshift, z_max)
+                    dy = lens.center_y - ys
+                    dz = lens.center_x - zs
+                    dist = max(float(np.hypot(dy, dz)), 1e-3)
+                    bend = min(abs(lens.theta_E), 1.6)
+                    ys2 = ys + (dy / dist) * bend
+                    zs2 = zs + (dz / dist) * bend
+                    pts.append([x_lens, ys, zs])    # arrive at plane
+                    pts.append([x_lens, ys2, zs2])  # leave after bend
+                    ys, zs = ys2, zs2
+                pts.append([-self._L, ys, zs])      # observer plane (left)
                 color = cmap[si % len(cmap)] + (1.0,)
                 self._rays.append(
-                    visuals.Line(pos=pts, color=color, width=2.5,
+                    visuals.Line(pos=np.array(pts), color=color, width=2.2,
                                  connect="strip", parent=self.view.scene)
                 )
-            source_marker_pos.append([sx, sy, z_start])
-        if source_marker_pos:
+            markers.append([self._L, sy, sz])
+        if markers:
             self._markers = visuals.Markers(
-                pos=np.array(source_marker_pos), face_color=(1, 1, 1, 1),
-                edge_color=(0.2, 0.2, 0.2, 1), size=9, parent=self.view.scene
-            )
+                pos=np.array(markers), face_color=(1, 1, 1, 1),
+                edge_color=(0.2, 0.2, 0.2, 1), size=8, parent=self.view.scene)
 
     @property
     def native(self):
@@ -174,10 +204,6 @@ def _grid_faces(nx, ny):
             tri.append((a, b, d))
             tri.append((a, d, c))
     return np.array(tri, dtype=np.uint32)
-
-
-def _total_theta_e(lenses):
-    return sum(abs(l.theta_E) for l in lenses)
 
 
 def _empty_result():
