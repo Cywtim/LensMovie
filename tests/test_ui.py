@@ -171,3 +171,104 @@ def test_3d_shares_top_row_with_square_external_panel(qapp):
     assert win.external_canvas is not None
     win.close()
     win.deleteLater()
+
+
+# --------------------------------------------------------------- fix / lock
+def test_fix_locks_value_and_disables_slider(qapp):
+    from app.controls import LensesPanel
+
+    panel = LensesPanel()
+    card = panel._cards[0]
+    row = card.sliders["theta_E"]
+    original = row.value()
+
+    assert row.is_fixed() is False
+    row.set_fixed(True)                      # fixing may be programmatic
+    assert row.is_fixed() is True
+    assert row._slider.isEnabled() is False  # user cannot drag it
+    assert row._lock_btn.text() == "🔒"
+
+    # A fixed parameter keeps its value against any programmatic change, even a
+    # direct setValue on the underlying slider widget.
+    row.set_value(original + 1.0)
+    assert row.value() == original
+    row._slider.setValue(row._to_int(original + 1.5))
+    assert row.value() == original
+    assert card.to_params().theta_E == original
+
+    panel.deleteLater()
+
+
+def test_unfix_requires_user_action(qapp):
+    from app.controls import LensesPanel
+
+    panel = LensesPanel()
+    row = panel._cards[0].sliders["theta_E"]
+    row.set_fixed(True)
+
+    # Programmatic unfix must be refused.
+    with pytest.raises(PermissionError):
+        row.set_fixed(False)
+    assert row.is_fixed() is True
+
+    # The user's click (user=True) releases it.
+    row.set_fixed(False, user=True)
+    assert row.is_fixed() is False
+    assert row._slider.isEnabled() is True
+    assert row._lock_btn.text() == "🔓"
+
+    # Value can be changed again once released.
+    row.set_value(2.0)
+    assert abs(row.value() - 2.0) < 0.01
+    panel.deleteLater()
+
+
+def test_lock_button_click_unfixes(qapp):
+    """Clicking the lock button is the sanctioned way to unfix."""
+    from app.controls import LensesPanel
+
+    panel = LensesPanel()
+    row = panel._cards[0].sliders["theta_E"]
+    row._lock_btn.setChecked(True)           # simulates a user click
+    assert row.is_fixed() is True
+    row._lock_btn.setChecked(False)          # user clicks again to unfix
+    assert row.is_fixed() is False
+    panel.deleteLater()
+
+
+def test_fixed_params_reported_for_lenses_and_sources(qapp):
+    from app.controls import LensesPanel, SourcesPanel
+
+    lp = LensesPanel()
+    sp = SourcesPanel()
+    lp._cards[0].fix_param("theta_E")
+    lp._cards[0].fix_param("gamma1")
+    sp._cards[0].fix_param("R_sersic")
+
+    assert lp.fixed_params()[0] == {"theta_E", "gamma1"}
+    assert sp.fixed_params()[0] == {"R_sersic"}
+
+    # unfix_all needs a user action too
+    with pytest.raises(PermissionError):
+        lp.unfix_all()
+    lp.unfix_all(user=True)
+    assert lp.fixed_params()[0] == set()
+    lp.deleteLater()
+    sp.deleteLater()
+
+
+def test_lock_survives_a_rerender(qapp):
+    """Rendering must not clear a user's locks."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.lenses_panel._cards[0].fix_param("theta_E")
+    before = win.lenses_panel._cards[0].sliders["theta_E"].value()
+    win._rerender()
+    win._rerender()
+    assert win._render_ok is True
+    row = win.lenses_panel._cards[0].sliders["theta_E"]
+    assert row.is_fixed() is True
+    assert row.value() == before
+    win.close()
+    win.deleteLater()

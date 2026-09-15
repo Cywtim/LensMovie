@@ -1,90 +1,128 @@
-# LensMovie
+# LensMovie — Interactive Gravitational Lensing Viewer
 
-An interactive Qt application that visualizes **gravitational lensing** with
-[lenstronomy](https://lenstronomy.readthedocs.io/), re-rendered in real time as
-you adjust parameters with sliders.
+## Objective
+An interactive Qt application that visualizes gravitational lensing as a function of
+user-controlled parameters. Real-time re-render of both a 2D image-plane view and an
+interactive 3D scene.
 
-## Features
-Single-window layout:
-- **Top — 3D scene** (Vispy, GPU), full width and **edge-on** along the line of
-  sight: `observer --------- lens plane(s) --------- source`. Each lens is a mass
-  disk perpendicular to the line of sight, positioned along it by its redshift
-  (balanced so observer / lenses / source are evenly spaced); light rays bend in
-  the sky plane at each lens. Sources are drawn as **extended blobs** sized by
-  their profile radius. The default camera is a side-on view (drag to rotate,
-  scroll to zoom). The bar spans the full window width with a fixed height.
-- **Display strip**: grid size (numPix), colormap, log/linear stretch, and a
-  **3D scene toggle**. Unchecking 3D stops rendering the scene (only the black
-  background area remains — the layout does not reflow) and skips rebuilding it,
-  which saves the per-update mesh construction / GL upload cost.
-- **External image panel** (square, to the right of the 3D scene): load your own
-  lensed-image matrix with **Load image…** and it is drawn with the same
-  colormap/stretch. Supported inputs:
-  `.npy` / `.npz`, `.fits` / `.fit` / `.fts` (first image HDU; a cube reduces to
-  its first plane), `.mat`, `.txt` / `.csv` / `.dat` / `.tsv`, and image files
-  `.png` / `.jpg` / `.tif` / `.bmp` (converted to luminance). The panel reports
-  the loaded shape, value range and any conversion applied.
-- **Lower half — a 2-row x 3-column grid**:
-  | | col 1 | col 2 | col 3 |
-  |---|---|---|---|
-  | row 1 | Fermat potential | Lens image (+ image positions) | **Lenses** config |
-  | row 2 | Time delay | Critical curve + caustic | **Sources** config |
-- **Config panels**:
-  - **Multiple lenses**: each with model selection (SIS / SIE / PEMD), own
-    parameters (theta_E, shear, ellipticity, center) and **redshift**; add/remove.
-  - **Multiple sources** — all **extended (resolved)** profiles, selectable per
-    source: `SERSIC_ELLIPSE`, `SERSIC`, `GAUSSIAN_ELLIPSE`, `GAUSSIAN`, each with
-    position, ellipticity, size (`R_sersic` / `sigma`), `n_sersic` and
-    **redshift**; add/remove.
-  - Physics via lenstronomy **multi-plane** lensing; one source-plane redshift is
-    used as the reference for the 2D scalar fields.
-- Debounced throttled redraw keeps slider dragging smooth.
-- All four 2D canvases share one figure size + Expanding size policy, so the grid
-  stays aligned and each canvas fills its cell on resize.
-- If Vispy/OpenGL is unavailable, the app degrades gracefully to 2D-only.
+## Confirmed design decisions (from user)
+- **Lens model**: multiple lens planes, each selectable (SIS / SPEP-ELLIPSE / PEMD,
+  extensible), each with its own redshift and parameters, addable/removable.
+- **Source**: multiple sources, each with position/shape and its own redshift,
+  addable/removable.
+- **Interaction**: parameter controls re-render in real time.
+- **3D**: real interactive 3D scene (GPU, Vispy) rendered as a **full-width bar
+  across the top** of the window (lens-mass planes + light-ray schematic).
+- **Layout** (single window):
+  - Top: 3D scene (Vispy), full width.
+  - Middle-left: 2D display area, two columns — Fermat potential + time-delay on
+    the left; lensed image + critical curve/caustic on the right.
+  - Right: config panel for the multiple lenses and multiple sources.
+- **Physics**: lenstronomy multi-plane lensing (`LensModel(..., multi_plane=True,
+  lens_redshift_list=[...], z_source=...)`); Fermat potential / time delay from
+  `arrival_time`; critical curve + caustic from `LensModelExtensions`.
+- **Build order**: Phase 1 = 2D only (**done**); Phase 2 = add 3D (**done**);
+  Phase 3 = multi-plane, multi-lens/multi-source + new layout (**done**).
 
-## Requirements
-The app is developed against a conda environment named `lenstronomy_env`:
+## Tech stack
+| Layer     | Choice                                        |
+|-----------|-----------------------------------------------|
+| GUI       | PyQt5                                         |
+| 2D image  | lenstronomy (simulation) + matplotlib canvas  |
+| 3D scene  | Vispy (GPU, interactive rotate/zoom)          |
+| compute   | numpy / scipy                                 |
 
+## Window layout (single window)
 ```
-python >=3.9
-numpy, scipy, matplotlib, PyQt5, lenstronomy, vispy
++------------------------------------------------------+--------------------+
+|        3D scene (Vispy) — edge-on, stretches          |  External image    |
+|         observer --------- lens plane(s) --------- source | (square, loads |
+|                                                       |  npy/fits/mat/...) |
++------------------------------------------------------+--------------------+
+|   numPix [..]    colormap [..]    stretch [..]      (display strip)        |
++---------------------+---------------------+-------------------------------+
+|  Fermat potential   |  Lens image          |  Lenses config                |
+|                     |  (+ image positions) |   lens1: model/params/z       |
++---------------------+---------------------+-------------------------------+
+|  Time delay         |  Critical curve      |  Sources config               |
+|                     |  + caustic           |   source1: pos/shape/z        |
++---------------------+---------------------+-------------------------------+
 ```
+
+All four 2D canvases share one figure size and an Expanding size policy so the
+grid stays aligned and each canvas fills its cell on resize.
+
+Top row notes:
+- The 3D scene has an Expanding (horizontal) / Fixed (vertical) size policy, so it
+  widens with the window while the height stays at ``_3d_height`` (280).
+- The **3D scene** checkbox in the display strip switches rendering off: only the
+  GL canvas is hidden, leaving a black background, so the layout does not reflow
+  and the scene rebuild (mesh + GL upload) is skipped.
+- The external-image panel is a fixed square of side ``_3d_height`` on the right of
+  the same row and displays matrices loaded by ``external_image.load_image_file``.
+
+## Parameters (per lens / per source)
+Each lens plane carries: model type, theta_E, shear g1/g2, center x/y, **redshift**.
+Each source is an **extended** profile (`SERSIC_ELLIPSE`, `SERSIC`,
+`GAUSSIAN_ELLIPSE`, `GAUSSIAN`) and carries: position, ellipticity, size
+(`R_sersic` or `sigma`), `n_sersic`, amplitude and **redshift**.
+Display: numPix, colormap, stretch.
+
+Every parameter slider carries a **fix (lock)** toggle. Fixing freezes the value:
+the slider is disabled and both ``_Slider.set_value`` and a direct
+``QSlider.setValue`` are reverted, so no code path can change it. Unfixing is
+reserved for the user — ``_Slider.set_fixed(False)`` raises ``PermissionError``
+unless called with ``user=True``, which only the lock button handler does.
+
+Source model -> lenstronomy kwargs (all resolved/extended, none are point sources):
+| model | kwargs |
+|---|---|
+| SERSIC_ELLIPSE | amp, R_sersic, n_sersic, e1, e2, center_x, center_y |
+| SERSIC | amp, R_sersic, n_sersic, center_x, center_y |
+| GAUSSIAN_ELLIPSE | amp, sigma, e1, e2, center_x, center_y |
+| GAUSSIAN | amp, sigma, center_x, center_y |
+
+## Modules
+```
+LensMovie/
+  app/
+    __init__.py
+    main.py        # entry point
+    main_window.py # main window: top 3D bar, display strip, 2x3 grid
+    controls.py    # LensesPanel + SourcesPanel + DisplayBar (add/remove entries)
+    plotting.py    # matplotlib canvases: Field/Image/Curves/External
+    external_image.py # load user-supplied matrices (npy/fits/mat/text/images)
+    lensing_calc.py# lenstronomy physics: multi-plane sim, arrival time (Fermat), cc/caustic, image positions
+    scene3d.py     # vispy -> edge-on 3D scene (top bar)
+  pyproject.toml
+  DESIGN.md
+  README.md
+```
+
+## Physics core (lensing_calc)
+- `LensModel(..., multi_plane=True, lens_redshift_list=[...], z_source=...)`.
+  Multiple source redshifts ⇒ rebuild the LensModel per source z_source.
+- Lensed image: `ImageModel` (LightModel per source, ImageData PIXEL PSF 1x1).
+- Fermat potential / time delay: `lens_model.arrival_time` over the 2D grid.
+- Critical curve + caustic: `LensModelExtensions.critical_curve_caustics`.
+- Image positions: `LensEquationSolver.findBrightImage`.
+- All API paths validated against lenstronomy 1.13.2 in the conda env.
 
 ## Run
-Run from the project root with `python -m` so the `app` package is importable:
-
 ```bash
-cd /home/cyan/Documents/GitHub/LensMovie
 conda run -n lenstronomy_env python -m app.main
-
-# or, after editable install (pip install -e .), from anywhere:
-#   conda run -n lenstronomy_env lensmovie
 ```
 
-## Tests
-Run from the project root (again, `-m` matters):
-
-```bash
-cd /home/cyan/Documents/GitHub/LensMovie
-conda run -n lenstronomy_env python -m pytest tests/ -q
-```
-(UI smoke tests use the offscreen Qt platform and run without a display; the 3D
-scene needs a live OpenGL context and is covered by a smoke run with a display.)
-
-## Project layout
-```
-app/
-  main.py          # entry point
-  main_window.py   # main window: top row (3D + external image), 2x3 grid
-  controls.py      # LensesPanel + SourcesPanel + DisplayBar
-  plotting.py      # matplotlib canvases (Field/Image/Curves/External)
-  lensing_calc.py  # lenstronomy physics core (multi-plane, fields, cc/caustic)
-  scene3d.py       # vispy -> edge-on 3D scene
-  external_image.py# load user-supplied matrices (npy/fits/mat/text/images)
-tests/
-DESIGN.md
-```
-
-## License
-MIT
+## Phase 2 (Vispy) — implemented
+- Installed `vispy` into `lenstronomy_env`. Environment has DISPLAY=:1 and
+  NVIDIA EGL/GL libs; the qt5 backend embeds as a real QWidget.
+- Scene content: translucent lens-mass plane (density ~ r^-2 -> height/color)
+  plus colored light-ray strips bending through the lens.
+- Implementation notes for vispy 0.14 (encountered during build):
+  * `SurfacePlot` + `colors` has an ordering bug (set_vertex_colors before
+    faces); build the surface as an explicit `scene.visuals.Mesh` instead.
+  * `Line` with per-vertex color arrays + `connect="segments"` trips
+    `_interpret_color`; use one `Line` per ray with a single colour and
+    `connect="strip"`.
+  * `Markers`, `Mesh(vertex_colors=...)`, and single-colour `Line` all work fine.
+- The 3D view is optional: `MainWindow` falls back to 2D-only if vispy fails.

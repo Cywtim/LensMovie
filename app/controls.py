@@ -30,25 +30,43 @@ from . import lensing_calc as lc
 
 
 class _Slider(QWidget):
-    """A labelled slider with a live numeric readout."""
+    """A labelled slider with a live numeric readout and a "fix" (lock) button.
+
+    Fixing a parameter locks its value: the slider is disabled and programmatic
+    :meth:`set_value` calls are ignored. A fixed parameter can only be released
+    by the user (see :meth:`set_fixed`).
+    """
 
     changed = pyqtSignal()
+    fixedChanged = pyqtSignal(bool)
 
     def __init__(self, label, vmin, vmax, value, decimals=2, parent=None):
         super().__init__(parent)
         self.decimals = decimals
         self.vmin, self.vmax = vmin, vmax
+        self._fixed = False
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self._label = QLabel(label)
         self._label.setMinimumWidth(64)
         self._slider = QSlider(Qt.Horizontal)
         self._slider.setRange(0, 1000)
+        self._frozen_int = 0  # last accepted position (used to revert when fixed)
         self._value = QLabel()
         self._value.setMinimumWidth(52)
+
+        # "Fix" toggle: locked parameters cannot be changed by anything except
+        # the user unlocking them again.
+        self._lock_btn = QPushButton("🔓")
+        self._lock_btn.setCheckable(True)
+        self._lock_btn.setFixedWidth(30)
+        self._lock_btn.setToolTip("Fix this parameter (locked until you unfix it)")
+        self._lock_btn.toggled.connect(self._on_lock_toggled)
+
         lay.addWidget(self._label)
         lay.addWidget(self._slider, 1)
         lay.addWidget(self._value)
+        lay.addWidget(self._lock_btn)
         self._slider.valueChanged.connect(self._on_change)
         self.set_value(value)
 
@@ -60,14 +78,67 @@ class _Slider(QWidget):
         return self.vmin + n / 1000.0 * (self.vmax - self.vmin)
 
     def _on_change(self, n):
+        if self._fixed:
+            # A fixed parameter must not change through *any* path, including a
+            # programmatic setValue on the underlying widget: snap it back.
+            self._slider.blockSignals(True)
+            self._slider.setValue(self._frozen_int)
+            self._slider.blockSignals(False)
+            return
+        self._frozen_int = n
         self._value.setText(f"{self._from_int(n):.{self.decimals}f}")
         self.changed.emit()
 
+    def _on_lock_toggled(self, checked):
+        # This handler is the *only* place that unfixes a parameter, and it runs
+        # only in response to a user click on the lock button.
+        self.set_fixed(bool(checked), user=True)
+
+    # ------------------------------------------------------------------ fixing
+    def is_fixed(self) -> bool:
+        return self._fixed
+
+    def set_fixed(self, fixed: bool, *, user: bool = False):
+        """Fix/unfix the parameter.
+
+        Fixing (``fixed=True``) may be done programmatically. Unfixing a fixed
+        parameter is reserved for the user, so it requires ``user=True``;
+        otherwise a PermissionError is raised.
+        """
+        fixed = bool(fixed)
+        if not fixed and self._fixed and not user:
+            raise PermissionError(
+                "a fixed parameter can only be unfixed by the user"
+            )
+        if fixed == self._fixed:
+            return
+        self._fixed = fixed
+        # Keep the button state in sync without re-entering the handler.
+        self._lock_btn.blockSignals(True)
+        self._lock_btn.setChecked(fixed)
+        self._lock_btn.blockSignals(False)
+        self._lock_btn.setText("🔒" if fixed else "🔓")
+        self._lock_btn.setToolTip(
+            "Fixed — click to unfix" if fixed
+            else "Fix this parameter (locked until you unfix it)"
+        )
+        self._slider.setEnabled(not fixed)
+        self._label.setEnabled(not fixed)
+        self._value.setEnabled(not fixed)
+        if fixed:
+            # Remember the frozen position so any later change attempt reverts.
+            self._frozen_int = self._slider.value()
+        self.fixedChanged.emit(fixed)
+
     def set_value(self, v):
+        # A fixed parameter keeps its value; nothing may change it silently.
+        if self._fixed:
+            return
         self._slider.blockSignals(True)
         self._slider.setValue(self._to_int(v))
-        self._value.setText(f"{v:.{self.decimals}f}")
         self._slider.blockSignals(False)
+        self._frozen_int = self._slider.value()
+        self._value.setText(f"{v:.{self.decimals}f}")
 
     def value(self):
         return self._from_int(self._slider.value())
@@ -117,6 +188,22 @@ class _EntryCard(QGroupBox):
         s.changed.connect(self._on_edit)
         self.sliders[name] = s
         self.form.addRow(f"{label}:", s)
+
+    # ------------------------------------------------------------- fixing API
+    def fixed_params(self) -> set:
+        """Names of this entry's parameters that are currently fixed."""
+        return {name for name, s in self.sliders.items() if s.is_fixed()}
+
+    def fix_param(self, name: str, fixed: bool = True, *, user: bool = False):
+        """Fix (or, with ``user=True``, unfix) one of this entry's parameters."""
+        if name in self.sliders:
+            self.sliders[name].set_fixed(fixed, user=user)
+
+    def unfix_all(self, *, user: bool = False):
+        """Unfix every parameter of this entry (user action required)."""
+        for s in self.sliders.values():
+            if s.is_fixed():
+                s.set_fixed(False, user=user)
 
     def _on_edit(self, *a):
         self.changed.emit()
@@ -233,6 +320,15 @@ class _CardListPanel(QScrollArea):
 
     def _emit(self, *a):
         self.changed.emit()
+
+    def fixed_params(self) -> list:
+        """Per-entry set of fixed parameter names, in card order."""
+        return [c.fixed_params() for c in self._cards]
+
+    def unfix_all(self, *, user: bool = False):
+        """Unfix every parameter of every entry (user action required)."""
+        for c in self._cards:
+            c.unfix_all(user=user)
 
 
 class LensesPanel(_CardListPanel):
