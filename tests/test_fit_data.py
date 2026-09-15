@@ -150,3 +150,14 @@ def test_model_image_shape_matches_model_grid():
                             model_num_pix=60, model_delta_pix=0.08)
     res = lc.compute(lc.Config(num_pix=60, delta_pix=0.08))
     assert res.image.shape == d.image.shape
+
+
+def test_unnormalised_psf_kernel_cannot_rescale_brightness():
+    """A PSF must integrate to 1: a scaled kernel must not change photometry."""
+    cfg = lc.Config(num_pix=90)
+    base = lc.compute(cfg)
+    k = lc.gaussian_psf_kernel(0.3, cfg.delta_pix)
+    scaled = lc.compute(lc.Config(num_pix=90, psf_kernel=k * 7.0))
+    assert np.isclose(scaled.image.max(), lc.compute(
+        lc.Config(num_pix=90, psf_kernel=k)).image.max(), rtol=1e-6)
+    assert scaled.image.max() < base.image.max()   # blurred, but not rescaled

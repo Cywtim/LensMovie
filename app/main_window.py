@@ -20,6 +20,7 @@ Lenses panel, Sources panel and DisplayBar.
 
 from __future__ import annotations
 
+import numpy as np
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QCheckBox,
@@ -265,7 +266,11 @@ class MainWindow(QMainWindow):
         elif kind == "mask":
             self._mask_array = (array != 0)
         else:
-            self._psf_kernel = array
+            # Normalise the PSF kernel so it integrates to 1.
+            k = np.asarray(array, dtype=float)
+            if k.ndim == 2 and k.size and k.sum() > 0:
+                k = k / k.sum()
+            self._psf_kernel = k
         self.statusBar().showMessage(f"loaded {kind}: {desc}", 4000)
         self._schedule()
 

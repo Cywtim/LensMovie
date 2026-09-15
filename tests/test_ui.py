@@ -336,3 +336,34 @@ def test_prepare_fit_data_returns_none_without_image(qapp):
     assert win.prepare_fit_data() is None
     win.close()
     win.deleteLater()
+
+
+def test_load_aux_noise_mask_psf(qapp, tmp_path, monkeypatch):
+    """Noise/mask/PSF files load, and a PSF kernel is normalised."""
+    from app import main_window as mw
+
+    win = mw.MainWindow()
+    shape = (40, 40)
+    noise = np.full(shape, 0.07)
+    mask = np.ones(shape, bool)
+    mask[5, 5] = False
+    kernel = np.ones((5, 5)) * 3.0            # deliberately not normalised
+    np.save(tmp_path / "noise.npy", noise)
+    np.save(tmp_path / "mask.npy", mask.astype(float))
+    np.save(tmp_path / "psf.npy", kernel)
+
+    for kind, fname in (("noise", "noise.npy"), ("mask", "mask.npy"),
+                        ("psf", "psf.npy")):
+        monkeypatch.setattr(mw.QFileDialog, "getOpenFileName",
+                            staticmethod(lambda *a, **k: (str(tmp_path / fname), "")))
+        win._load_aux(kind)
+
+    assert win._noise_array is not None and win._noise_array.shape == shape
+    assert win._mask_array is not None
+    assert win._mask_array[5, 5] == False  # noqa: E712
+    # The PSF kernel must be normalised so it cannot rescale brightness.
+    assert abs(np.asarray(win.current_psf_kernel()).sum() - 1.0) < 1e-9
+    win._rerender()
+    assert win._render_ok is True
+    win.close()
+    win.deleteLater()

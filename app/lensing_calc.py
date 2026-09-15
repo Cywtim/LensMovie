@@ -365,9 +365,16 @@ def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix,
     }
     data = ImageData(**kwargs_data)
     # Convolve with the supplied PSF kernel; a 1x1 kernel means no blurring.
+    # The kernel is normalised so it cannot rescale the image brightness: a PSF
+    # must integrate to unity.
     kernel = np.asarray(psf_kernel, dtype=float) if psf_kernel is not None \
         else np.array([[1.0]])
     if kernel.ndim != 2 or kernel.size == 0:
+        kernel = np.array([[1.0]])
+    total = kernel.sum()
+    if total > 0:
+        kernel = kernel / total
+    else:
         kernel = np.array([[1.0]])
     psf = PSF(psf_type="PIXEL", pixel_size=delta_pix, kernel_point_source=kernel)
     light_model = LightModel(light_model_list=[_valid_source_model(source.model)])
