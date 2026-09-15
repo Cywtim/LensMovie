@@ -13,6 +13,10 @@ Single-window layout:
   the sky plane at each lens. Sources are drawn as **extended blobs** sized by
   their profile radius. The default camera is a side-on view (drag to rotate,
   scroll to zoom). The bar spans the full window width with a fixed height.
+- **Display row**: the display settings share one row with the external-image
+  file buttons (**Load… / Clear / Noise… / Mask… / PSF…**), visually separated into
+  their own labelled `data:` group so they read as two distinct groups. The row
+  scrolls horizontally on a narrow window instead of clipping.
 - **Display strip**: grid size (numPix), colormap, log/linear stretch, and a
   **3D scene toggle**. Unchecking 3D stops rendering the scene (only the black
   background area remains — the layout does not reflow) and skips rebuilding it,

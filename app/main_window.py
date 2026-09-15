@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import numpy as np
 from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFrame,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -32,13 +34,14 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from . import lensing_calc as lc
-from .controls import DisplayBar, FitBar, LensesPanel, SourcesPanel
+from .controls import DataBar, DisplayBar, FitBar, LensesPanel, SourcesPanel
 from .fitting import FitError
 from .plotting import CurvesCanvas, ExternalCanvas, FieldCanvas, ImageCanvas
 
@@ -91,28 +94,6 @@ class MainWindow(QMainWindow):
         ext_lay.setContentsMargins(4, 4, 4, 4)
         self.external_canvas = ExternalCanvas()
         ext_lay.addWidget(self.external_canvas, 1)
-        btn_row = QHBoxLayout()
-        self._load_btn = QPushButton("Load image…")
-        self._load_btn.clicked.connect(self._load_external_image)
-        self._clear_ext_btn = QPushButton("Clear")
-        self._clear_ext_btn.clicked.connect(self._clear_external_image)
-        btn_row.addWidget(self._load_btn, 1)
-        btn_row.addWidget(self._clear_ext_btn, 0)
-        ext_lay.addLayout(btn_row)
-
-        # Optional fitting inputs: noise (1-sigma), mask, PSF kernel.
-        aux_row = QHBoxLayout()
-        self._noise_btn = QPushButton("Noise…")
-        self._noise_btn.clicked.connect(lambda: self._load_aux("noise"))
-        self._mask_btn = QPushButton("Mask…")
-        self._mask_btn.clicked.connect(lambda: self._load_aux("mask"))
-        self._psf_btn = QPushButton("PSF…")
-        self._psf_btn.clicked.connect(lambda: self._load_aux("psf"))
-        for b in (self._noise_btn, self._mask_btn, self._psf_btn):
-            b.setToolTip("Load a same-shape file (npy/fits/…); PSF is a kernel")
-            aux_row.addWidget(b, 1)
-        ext_lay.addLayout(aux_row)
-
         # What the external panel shows: the raw data, the data resampled onto
         # the model grid, or the fit's best-fit model / residual.
         mode_row = QHBoxLayout()
@@ -134,9 +115,41 @@ class MainWindow(QMainWindow):
 
         root.addLayout(top_row)
 
-        # ----------------------------------------------------------------- display bar
+        # ------------------------------------------ display row (settings | data)
+        # Display settings and the external-image file buttons share one row but
+        # are visually separated so they read as two distinct groups.
         self.display_bar = DisplayBar()
-        root.addWidget(self.display_bar)
+        self.data_bar = DataBar()
+        self.data_bar.loadImageRequested.connect(self._load_external_image)
+        self.data_bar.clearRequested.connect(self._clear_external_image)
+        self.data_bar.loadAuxRequested.connect(self._load_aux)
+
+        display_row = QWidget()
+        dr = QHBoxLayout(display_row)
+        dr.setContentsMargins(0, 0, 0, 0)
+        dr.setSpacing(6)
+        dr.addWidget(self.display_bar, 0)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        sep.setToolTip("external image data")
+        dr.addWidget(sep)
+
+        dr.addWidget(QLabel("<b>data:</b>"), 0)
+        dr.addWidget(self.data_bar, 0)
+        dr.addStretch(1)
+
+        # The row has a wide natural minimum (display settings + data buttons), so
+        # it scrolls horizontally instead of clipping on a narrow window.
+        self.display_row = QScrollArea()
+        self.display_row.setWidgetResizable(True)
+        self.display_row.setWidget(display_row)
+        self.display_row.setFrameShape(QFrame.NoFrame)
+        self.display_row.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.display_row.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.display_row.setFixedHeight(display_row.sizeHint().height() + 16)
+        root.addWidget(self.display_row)
 
         # Fitting strip.
         self.fit_bar = FitBar()

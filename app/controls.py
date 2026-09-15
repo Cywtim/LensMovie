@@ -419,6 +419,43 @@ class SourcesPanel(_CardListPanel):
         return [c.to_params() for c in self._cards]
 
 
+class DataBar(QWidget):
+    """The external-image file buttons, on their own (separated) section of the
+    display row so they do not consume vertical space inside the image panel."""
+
+    loadImageRequested = pyqtSignal()
+    clearRequested = pyqtSignal()
+    loadAuxRequested = pyqtSignal(str)      # "noise" | "mask" | "psf"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+
+        self._load_btn = QPushButton("Load…")
+        self._load_btn.setToolTip("Load a lensed image / matrix\n(npy, fits, mat, text, image)")
+        self._load_btn.clicked.connect(self.loadImageRequested)
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.setToolTip("Forget the loaded data")
+        self._clear_btn.clicked.connect(self.clearRequested)
+
+        self._noise_btn = QPushButton("Noise…")
+        self._mask_btn = QPushButton("Mask…")
+        self._psf_btn = QPushButton("PSF…")
+        for kind, btn in (("noise", self._noise_btn), ("mask", self._mask_btn),
+                          ("psf", self._psf_btn)):
+            btn.setToolTip(
+                ("Load the PSF kernel" if kind == "psf" else f"Load the {kind} map")
+                + " (same shape as the image; npy/fits/…)"
+            )
+            btn.clicked.connect(lambda _=False, k=kind: self.loadAuxRequested.emit(k))
+
+        for b in (self._load_btn, self._clear_btn, self._noise_btn,
+                  self._mask_btn, self._psf_btn):
+            lay.addWidget(b)
+
+
 class FitBar(QWidget):
     """Compact strip controlling the PSO fit against the loaded data."""
 

@@ -721,3 +721,95 @@ def test_worker_disables_previews_when_unchecked():
     assert on._preview_enabled is True
     assert off._preview_enabled is False
     assert "preview_interval" in on._kwargs and "preview_interval" in off._kwargs
+
+
+# ------------------------------------------------- display/data row layout
+def test_external_image_buttons_share_the_numpix_row(qapp):
+    """The data buttons sit on the numPix row, in their own separated group."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.resize(1600, 1080)
+    win.show()
+    qapp.processEvents()
+
+    numpix = win.display_bar._numpix
+    bx, by = numpix.mapTo(win, numpix.rect().topLeft()).x(), \
+        numpix.mapTo(win, numpix.rect().topLeft()).y()
+
+    for btn in (win.data_bar._load_btn, win.data_bar._clear_btn,
+                win.data_bar._noise_btn, win.data_bar._mask_btn,
+                win.data_bar._psf_btn):
+        tl = btn.mapTo(win, btn.rect().topLeft())
+        assert abs(tl.y() - by) < 12, "button not on the numPix row"
+        assert tl.x() > bx, "button should be to the right of numPix"
+
+    # separated: a visible gap between the last display control and the buttons
+    last_display = win.display_bar._three_d
+    gap = win.data_bar._load_btn.mapTo(win, win.data_bar._load_btn.rect().topLeft()).x() \
+        - (last_display.mapTo(win, last_display.rect().topLeft()).x() + last_display.width())
+    assert gap > 25, f"groups are not visually separated (gap {gap} px)"
+    win.close()
+    win.deleteLater()
+
+
+def test_display_row_scrolls_instead_of_clipping(qapp):
+    """On a narrow window the row must stay reachable via a scrollbar."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.resize(900, 900)
+    win.show()
+    qapp.processEvents()
+
+    sa = win.display_row
+    sb = sa.horizontalScrollBar()
+    assert sb.maximum() > 0, "expected a horizontal scrollbar on a narrow window"
+    sb.setValue(sb.maximum())
+    qapp.processEvents()
+    tl = win.data_bar._psf_btn.mapTo(win, win.data_bar._psf_btn.rect().topLeft())
+    assert 0 <= tl.x() and tl.x() + win.data_bar._psf_btn.width() <= win.width()
+    win.close()
+    win.deleteLater()
+
+
+def test_data_bar_buttons_emit_the_right_kind(qapp):
+    """Each moved button must emit the kind its loader expects.
+
+    The window's real handler (which opens a modal file dialog) is disconnected
+    first, so this stays a unit test of the button -> signal mapping.
+    """
+    from app.controls import DataBar
+
+    bar = DataBar()
+    calls = []
+    bar.loadAuxRequested.connect(calls.append)     # no window handler attached
+    bar._noise_btn.click()
+    bar._mask_btn.click()
+    bar._psf_btn.click()
+    assert calls == ["noise", "mask", "psf"]
+
+    loads = []
+    bar.loadImageRequested.connect(lambda: loads.append("image"))
+    clears = []
+    bar.clearRequested.connect(lambda: clears.append("clear"))
+    bar._load_btn.click()
+    bar._clear_btn.click()
+    assert loads == ["image"] and clears == ["clear"]
+    bar.deleteLater()
+
+
+def test_window_wires_data_bar_to_its_loaders(qapp):
+    """The window must connect the data bar to its handlers (not leave them dead).
+
+    ``disconnect()`` raises TypeError when a signal has no connections, so
+    succeeding here proves the window wired each one up.
+    """
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    for signal in (win.data_bar.loadImageRequested, win.data_bar.clearRequested,
+                   win.data_bar.loadAuxRequested):
+        signal.disconnect()        # TypeError if the window never connected it
+    win.close()
+    win.deleteLater()

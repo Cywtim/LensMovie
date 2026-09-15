@@ -61,6 +61,14 @@ misaligning the same sky coordinate by up to 112 px. The Critical-curve panel al
 now adopts the **model grid's field of view** instead of auto-scaling to its own
 curve extents (a 2.5x scale mismatch). Measured alignment is now 0.000 px.
 
+Display row notes:
+- The display settings and the external-image file buttons sit in **one row**,
+  divided by a vertical separator into a `data:` group. The row's natural minimum
+  width is ~1400 px, so it lives in a horizontal ``QScrollArea`` (vertical bar
+  always off) and scrolls rather than clipping on a narrower window.
+- Moving the buttons out of the square external-image panel also gives that
+  panel's canvas more height.
+
 Top row notes:
 - The 3D scene has an Expanding (horizontal) / Fixed (vertical) size policy, so it
   widens with the window while the height stays at ``_3d_height`` (280).
