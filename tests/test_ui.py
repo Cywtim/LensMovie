@@ -108,37 +108,41 @@ def test_3d_toggle_exists_and_defaults_on(qapp):
     bar.deleteLater()
 
 
-def test_3d_toggle_hides_scene_and_skips_rebuild(qapp):
+def test_3d_toggle_keeps_black_background_and_skips_rebuild(qapp):
+    """Turning 3D off hides only the rendering canvas: the black area stays."""
     from app.main_window import MainWindow
 
     win = MainWindow()
     if win.scene3d is None:
         pytest.skip("3D scene unavailable in this environment")
 
-    # On by default.
     win.show()
     qapp.processEvents()
     assert win.display_bar.three_d_enabled() is True
+    assert win._3d_native.isVisible() is True
 
-    # Turn off: the 3D bar is hidden and the render still succeeds.
+    # Turn off: only the GL canvas is hidden; the black background area remains
+    # (the layout must not reflow) and the 2D render still succeeds.
     win.display_bar._three_d.setChecked(False)
     qapp.processEvents()
-    assert win._3d_wrap.isVisible() is False
+    assert win._3d_native.isVisible() is False
+    assert win._3d_wrap.isVisible() is True
+    assert win._3d_wrap.height() == win._3d_height
     win._rerender()
     assert win._render_ok is True
 
     # Turn back on.
     win.display_bar._three_d.setChecked(True)
     qapp.processEvents()
-    assert win._3d_wrap.isVisible() is True
+    assert win._3d_native.isVisible() is True
     win._rerender()
     assert win._render_ok is True
     win.close()
     win.deleteLater()
 
 
-def test_3d_bar_spans_full_width_with_fixed_height(qapp):
-    """The 3D scene should stretch horizontally but keep its height."""
+def test_3d_shares_top_row_with_square_external_panel(qapp):
+    """Top row = stretchable 3D (fixed height) + a fixed square external panel."""
     from PyQt5.QtWidgets import QSizePolicy
 
     from app.main_window import MainWindow
@@ -150,10 +154,20 @@ def test_3d_bar_spans_full_width_with_fixed_height(qapp):
     win.show()
     qapp.processEvents()
 
-    native = win.scene3d.native
+    native = win._3d_native
     assert native.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
     assert native.sizePolicy().verticalPolicy() == QSizePolicy.Fixed
-    assert native.width() > 0.9 * win.width()
     assert native.height() == win._3d_height
+
+    # The external panel is square and sits at the right of the same row.
+    assert win.ext_panel.width() == win.ext_panel.height() == win._3d_height
+    # Both are in the top row: compare positions of sibling widgets (the 3D
+    # native lives inside its wrapper, so use the wrapper).
+    assert win.ext_panel.x() > win._3d_wrap.x()
+    assert win.ext_panel.y() == win._3d_wrap.y()
+    assert win.ext_panel.height() == win._3d_wrap.height()
+    # The 3D takes the remaining width (window minus the square panel).
+    assert native.width() > 0.6 * win.width()
+    assert win.external_canvas is not None
     win.close()
     win.deleteLater()

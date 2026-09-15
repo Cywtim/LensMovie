@@ -189,3 +189,62 @@ class CurvesCanvas(_MplCanvas):
             line.set_visible(True)
         else:
             line.set_visible(False)
+
+
+class ExternalCanvas(_MplCanvas):
+    """Displays a user-supplied 2D matrix (npy / fits / image / text ...).
+
+    Axes are pixel indices because an external file carries no pixel scale. The
+    array keeps its own aspect ratio, so a non-square matrix is not distorted.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self._style_axes("External image")
+        self._ax.set_xlabel("pixel x", fontsize=8)
+        self._ax.set_ylabel("pixel y", fontsize=8)
+        self._im = None
+        self._cb = None
+        self._show_message("no file loaded\n\nUse “Load image…” below")
+
+    def _show_message(self, text):
+        if self._im is not None:
+            self._im = None
+            self._cb = None
+            self._ax.clear()
+            self._style_axes("External image")
+            self._ax.set_xlabel("pixel x", fontsize=8)
+            self._ax.set_ylabel("pixel y", fontsize=8)
+        self._ax.text(0.5, 0.5, text, ha="center", va="center",
+                      transform=self._ax.transAxes, fontsize=9, color="0.4")
+        self._ax.set_xticks([])
+        self._ax.set_yticks([])
+        self.draw_idle()
+
+    def show_message(self, text):
+        """Public helper so the window can report load errors in-place."""
+        self._show_message(text)
+
+    def update_external(self, array, title="External image", colormap="magma",
+                        stretch="log"):
+        data = np.asarray(array, dtype=float)
+        if stretch == "log":
+            # Shift so the smallest value is > 0 before taking a log.
+            shifted = data - data.min()
+            vmin = max(shifted.max() * 1e-5, np.finfo(float).eps)
+            view = np.log10(np.clip(shifted, vmin, None))
+        else:
+            view = data
+
+        self._ax.clear()
+        self._style_axes(title)
+        self._ax.set_xlabel("pixel x", fontsize=8)
+        self._ax.set_ylabel("pixel y", fontsize=8)
+        self._im = self._ax.imshow(
+            view, origin="lower",
+            cmap=_COLORMAPS.get(colormap, cm.magma), interpolation="nearest",
+        )
+        self._cb = self._figure.colorbar(self._im, ax=self._ax, fraction=0.046, pad=0.04)
+        self._ax.set_aspect("equal", adjustable="box")
+        self.draw_idle()
+

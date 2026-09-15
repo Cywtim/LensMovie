@@ -14,9 +14,16 @@ Single-window layout:
   their profile radius. The default camera is a side-on view (drag to rotate,
   scroll to zoom). The bar spans the full window width with a fixed height.
 - **Display strip**: grid size (numPix), colormap, log/linear stretch, and a
-  **3D scene toggle**. Unchecking 3D hides the scene and skips rebuilding it
-  (mesh construction + GL upload), so an unused 3D view costs nothing — useful
-  on slower machines or when only the 2D views matter.
+  **3D scene toggle**. Unchecking 3D stops rendering the scene (only the black
+  background area remains — the layout does not reflow) and skips rebuilding it,
+  which saves the per-update mesh construction / GL upload cost.
+- **External image panel** (square, to the right of the 3D scene): load your own
+  lensed-image matrix with **Load image…** and it is drawn with the same
+  colormap/stretch. Supported inputs:
+  `.npy` / `.npz`, `.fits` / `.fit` / `.fts` (first image HDU; a cube reduces to
+  its first plane), `.mat`, `.txt` / `.csv` / `.dat` / `.tsv`, and image files
+  `.png` / `.jpg` / `.tif` / `.bmp` (converted to luminance). The panel reports
+  the loaded shape, value range and any conversion applied.
 - **Lower half — a 2-row x 3-column grid**:
   | | col 1 | col 2 | col 3 |
   |---|---|---|---|
@@ -69,11 +76,12 @@ scene needs a live OpenGL context and is covered by a smoke run with a display.)
 ```
 app/
   main.py          # entry point
-  main_window.py   # main window: top 3D bar, display strip, 2x3 grid
+  main_window.py   # main window: top row (3D + external image), 2x3 grid
   controls.py      # LensesPanel + SourcesPanel + DisplayBar
-  plotting.py      # matplotlib canvases (Field/Image/Curves)
+  plotting.py      # matplotlib canvases (Field/Image/Curves/External)
   lensing_calc.py  # lenstronomy physics core (multi-plane, fields, cc/caustic)
   scene3d.py       # vispy -> edge-on 3D scene
+  external_image.py# load user-supplied matrices (npy/fits/mat/text/images)
 tests/
 DESIGN.md
 ```

@@ -34,10 +34,11 @@ interactive 3D scene.
 
 ## Window layout (single window)
 ```
-+---------------------------------------------------------------------------+
-|              3D scene (Vispy) — edge-on, full-width bar                    |
-|         observer --------- lens plane(s) --------- source                  |
-+---------------------------------------------------------------------------+
++------------------------------------------------------+--------------------+
+|        3D scene (Vispy) — edge-on, stretches          |  External image    |
+|         observer --------- lens plane(s) --------- source | (square, loads |
+|                                                       |  npy/fits/mat/...) |
++------------------------------------------------------+--------------------+
 |   numPix [..]    colormap [..]    stretch [..]      (display strip)        |
 +---------------------+---------------------+-------------------------------+
 |  Fermat potential   |  Lens image          |  Lenses config                |
@@ -50,6 +51,15 @@ interactive 3D scene.
 
 All four 2D canvases share one figure size and an Expanding size policy so the
 grid stays aligned and each canvas fills its cell on resize.
+
+Top row notes:
+- The 3D scene has an Expanding (horizontal) / Fixed (vertical) size policy, so it
+  widens with the window while the height stays at ``_3d_height`` (280).
+- The **3D scene** checkbox in the display strip switches rendering off: only the
+  GL canvas is hidden, leaving a black background, so the layout does not reflow
+  and the scene rebuild (mesh + GL upload) is skipped.
+- The external-image panel is a fixed square of side ``_3d_height`` on the right of
+  the same row and displays matrices loaded by ``external_image.load_image_file``.
 
 ## Parameters (per lens / per source)
 Each lens plane carries: model type, theta_E, shear g1/g2, center x/y, **redshift**.
@@ -74,7 +84,8 @@ LensMovie/
     main.py        # entry point
     main_window.py # main window: top 3D bar, display strip, 2x3 grid
     controls.py    # LensesPanel + SourcesPanel + DisplayBar (add/remove entries)
-    plotting.py    # matplotlib canvases: FieldCanvas, ImageCanvas, CurvesCanvas
+    plotting.py    # matplotlib canvases: Field/Image/Curves/External
+    external_image.py # load user-supplied matrices (npy/fits/mat/text/images)
     lensing_calc.py# lenstronomy physics: multi-plane sim, arrival time (Fermat), cc/caustic, image positions
     scene3d.py     # vispy -> edge-on 3D scene (top bar)
   pyproject.toml

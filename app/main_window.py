@@ -22,9 +22,13 @@ from __future__ import annotations
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
+    QFileDialog,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
+    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -32,7 +36,7 @@ from PyQt5.QtWidgets import (
 
 from . import lensing_calc as lc
 from .controls import DisplayBar, LensesPanel, SourcesPanel
-from .plotting import CurvesCanvas, FieldCanvas, ImageCanvas
+from .plotting import CurvesCanvas, ExternalCanvas, FieldCanvas, ImageCanvas
 
 
 class MainWindow(QMainWindow):
@@ -45,30 +49,59 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
 
-        # ----------------------------------------------------------------- top 3D bar
-        # Fixed height (so the vertical size is unchanged) but allowed to stretch
-        # across the full window width.
-        self.scene3d = None
+        # ------------------------------------------------- top row: 3D bar + external image
+        # The 3D scene stretches across the row; a fixed square panel on the right
+        # displays a user-supplied matrix. Both keep the same fixed height.
         self._3d_height = 280
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+
+        self.scene3d = None
         self._3d_wrap = QWidget()
         self._3d_wrap.setFixedHeight(self._3d_height)
+        # Black background: when 3D is switched off only this black area remains
+        # (the space is preserved instead of collapsing).
+        self._3d_wrap.setAutoFillBackground(True)
+        self._3d_wrap.setStyleSheet("background-color: black;")
         _3d_lay = QHBoxLayout(self._3d_wrap)
         _3d_lay.setContentsMargins(0, 0, 0, 0)
         try:
             from .scene3d import Scene3D
 
-            self.scene3d = Scene3D(size=(1600, self._3d_height))
-            native = self.scene3d.native
-            # Expand horizontally to fill the bar, keep the height fixed.
-            native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            native.setMinimumHeight(self._3d_height)
-            native.setMaximumHeight(self._3d_height)
-            native.setMinimumWidth(200)
-            _3d_lay.addWidget(native, 1)
+            self.scene3d = Scene3D(size=(1300, self._3d_height))
+            self._3d_native = self.scene3d.native
+            self._3d_native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self._3d_native.setMinimumHeight(self._3d_height)
+            self._3d_native.setMaximumHeight(self._3d_height)
+            self._3d_native.setMinimumWidth(200)
+            _3d_lay.addWidget(self._3d_native, 1)
         except Exception as exc:
+            self._3d_native = None
             self.statusBar().showMessage(f"3D scene unavailable: {exc}")
-            self._3d_wrap.hide()
-        root.addWidget(self._3d_wrap)
+        top_row.addWidget(self._3d_wrap, 1)
+
+        # Square external-image panel, same height as the 3D bar.
+        self.ext_panel = QGroupBox("External image")
+        self.ext_panel.setFixedSize(self._3d_height, self._3d_height)
+        ext_lay = QVBoxLayout(self.ext_panel)
+        ext_lay.setContentsMargins(4, 4, 4, 4)
+        self.external_canvas = ExternalCanvas()
+        ext_lay.addWidget(self.external_canvas, 1)
+        btn_row = QHBoxLayout()
+        self._load_btn = QPushButton("Load image…")
+        self._load_btn.clicked.connect(self._load_external_image)
+        self._clear_ext_btn = QPushButton("Clear")
+        self._clear_ext_btn.clicked.connect(self._clear_external_image)
+        btn_row.addWidget(self._load_btn, 1)
+        btn_row.addWidget(self._clear_ext_btn, 0)
+        ext_lay.addLayout(btn_row)
+        self._ext_label = QLabel("no file loaded")
+        self._ext_label.setWordWrap(True)
+        self._ext_label.setStyleSheet("color: gray; font-size: 10px;")
+        ext_lay.addWidget(self._ext_label)
+        top_row.addWidget(self.ext_panel, 0)
+
+        root.addLayout(top_row)
 
         # ----------------------------------------------------------------- display bar
         self.display_bar = DisplayBar()
@@ -119,18 +152,65 @@ class MainWindow(QMainWindow):
         self.display_bar._three_d.toggled.connect(self._on_3d_toggled)
 
         self._last_display = self.display_bar.display()
+        self._external_array = None
         self._render_ok = False
         self._rerender()
 
     def _on_3d_toggled(self, enabled: bool):
-        # Hiding the widget also stops the GL canvas from painting, and the
-        # rebuild is skipped in _rerender, so an unused 3D view costs nothing.
-        self._3d_wrap.setVisible(bool(enabled))
+        # When off we hide only the rendering canvas and keep the black area, so
+        # the layout does not reflow; the expensive rebuild is skipped too.
+        if self._3d_native is not None:
+            self._3d_native.setVisible(bool(enabled))
         if enabled:
             self._schedule()
         self.statusBar().showMessage(
-            "3D scene on" if enabled else "3D scene off (resources saved)", 2000
+            "3D scene on" if enabled else "3D scene off (black background)", 2000
         )
+
+    # ------------------------------------------------------- external image
+    def _load_external_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load a lensed image / matrix",
+            "",
+            "All supported (*.npy *.npz *.fits *.fit *.fts *.mat *.txt *.csv "
+            "*.dat *.tsv *.png *.jpg *.jpeg *.tif *.tiff *.bmp);;"
+            "NumPy (*.npy *.npz);;FITS (*.fits *.fit *.fts);;"
+            "MATLAB (*.mat);;Text (*.txt *.csv *.dat *.tsv);;"
+            "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp);;All files (*)",
+        )
+        if not path:
+            return
+        self.load_external_image_file(path)
+
+    def load_external_image_file(self, path: str) -> bool:
+        """Load ``path`` into the external panel. Returns True on success."""
+        from .external_image import ImageLoadError, load_image_file
+
+        try:
+            array, desc = load_image_file(path)
+        except ImageLoadError as exc:
+            self.external_canvas.show_message(f"could not load:\n{exc}")
+            self._ext_label.setText(f"error: {exc}")
+            self.statusBar().showMessage(f"external image error: {exc}", 6000)
+            return False
+
+        self._external_array = array
+        display = self.display_bar.display()
+        self.external_canvas.update_external(
+            array,
+            title=f"External image {array.shape[0]}x{array.shape[1]}",
+            colormap=display["colormap"],
+            stretch=display["stretch"],
+        )
+        self._ext_label.setText(desc)
+        self.statusBar().showMessage(f"loaded {desc}", 4000)
+        return True
+
+    def _clear_external_image(self):
+        self._external_array = None
+        self.external_canvas.show_message("no file loaded\n\nUse “Load image…” below")
+        self._ext_label.setText("no file loaded")
 
     def _schedule(self, *a):
         self._timer.start()
@@ -170,6 +250,18 @@ class MainWindow(QMainWindow):
         self.curves_canvas.update_curves(
             result.cc_ra, result.cc_dec, result.caustic_ra, result.caustic_dec,
         )
+
+        # Keep an already-loaded external matrix in sync with the display settings.
+        if self._external_array is not None:
+            try:
+                self.external_canvas.update_external(
+                    self._external_array,
+                    title=f"External image {self._external_array.shape[0]}"
+                          f"x{self._external_array.shape[1]}",
+                    colormap=display["colormap"], stretch=display["stretch"],
+                )
+            except Exception:
+                pass
 
         # The 3D scene is only rebuilt when it is actually visible: this is the
         # expensive part (mesh construction + GL upload per update).
