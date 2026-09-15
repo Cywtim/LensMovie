@@ -40,19 +40,52 @@ class LensParams:
     gamma: float = 2.0          # PEMD power-law index
 
 
+# Extended-source light profiles and the kwargs each one needs. All of these are
+# resolved (extended) sources, not point sources.
+SOURCE_MODELS = ["SERSIC_ELLIPSE", "SERSIC", "GAUSSIAN_ELLIPSE", "GAUSSIAN"]
+
+
 @dataclass
 class SourceParams:
-    """One extended Sersic source."""
+    """One extended source (Sersic or Gaussian profile)."""
 
     amp: float = 1.0
-    R_sersic: float = 0.1
-    n_sersic: float = 4.0
+    R_sersic: float = 0.1      # Sersic half-light radius (arcsec)
+    n_sersic: float = 4.0      # Sersic index
+    sigma: float = 0.1         # Gaussian width (arcsec), used by GAUSSIAN*
     e1: float = 0.0
     e2: float = 0.0
     center_x: float = 0.1
     center_y: float = -0.1
     redshift: float = 1.5
     model: str = "SERSIC_ELLIPSE"
+
+    def profile_kwargs(self) -> dict:
+        """Build the lenstronomy kwargs dict for this source's light profile."""
+        common = {
+            "amp": float(self.amp),
+            "center_x": float(self.center_x),
+            "center_y": float(self.center_y),
+        }
+        model = self.model if self.model in SOURCE_MODELS else "SERSIC_ELLIPSE"
+        if model.startswith("SERSIC"):
+            common["R_sersic"] = float(self.R_sersic)
+            common["n_sersic"] = float(self.n_sersic)
+            if model == "SERSIC_ELLIPSE":
+                common["e1"] = float(self.e1)
+                common["e2"] = float(self.e2)
+        else:  # GAUSSIAN / GAUSSIAN_ELLIPSE
+            common["sigma"] = float(self.sigma)
+            if model == "GAUSSIAN_ELLIPSE":
+                common["e1"] = float(self.e1)
+                common["e2"] = float(self.e2)
+        return common
+
+    def effective_radius(self) -> float:
+        """A representative angular size used for the 3D source blob."""
+        if self.model.startswith("SERSIC"):
+            return float(max(self.R_sersic, 1e-3))
+        return float(max(self.sigma, 1e-3))
 
 
 @dataclass
@@ -279,6 +312,11 @@ def compute(config: Config, ref_source_index: int = -1) -> SimResult:
         )
 
 
+def _valid_source_model(model: str) -> str:
+    """Return a lenstronomy light-profile name, falling back to SERSIC_ELLIPSE."""
+    return model if model in SOURCE_MODELS else "SERSIC_ELLIPSE"
+
+
 def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix):
     from lenstronomy.Data.imaging_data import ImageData
     from lenstronomy.Data.psf import PSF
@@ -293,18 +331,8 @@ def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix):
     }
     data = ImageData(**kwargs_data)
     psf = PSF(psf_type="PIXEL", pixel_size=delta_pix, kernel_point_source=np.array([[1.0]]))
-    light_model = LightModel(light_model_list=[source.model])
-    kwargs_light = [
-        {
-            "amp": source.amp,
-            "R_sersic": source.R_sersic,
-            "n_sersic": source.n_sersic,
-            "e1": source.e1,
-            "e2": source.e2,
-            "center_x": source.center_x,
-            "center_y": source.center_y,
-        }
-    ]
+    light_model = LightModel(light_model_list=[_valid_source_model(source.model)])
+    kwargs_light = [source.profile_kwargs()]
     image_model = ImageModel(
         data_class=data,
         psf_class=psf,

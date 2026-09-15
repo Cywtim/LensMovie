@@ -8,8 +8,11 @@ you adjust parameters with sliders.
 Single-window layout:
 - **Top — 3D scene** (Vispy, GPU), full width and **edge-on** along the line of
   sight: `observer --------- lens plane(s) --------- source`. Each lens is a mass
-  disk perpendicular to the line of sight, positioned along it by its redshift;
-  light rays bend in the sky plane at each lens. Drag to rotate, scroll to zoom.
+  disk perpendicular to the line of sight, positioned along it by its redshift
+  (balanced so observer / lenses / source are evenly spaced); light rays bend in
+  the sky plane at each lens. Sources are drawn as **extended blobs** sized by
+  their profile radius. The default camera is a side-on view (drag to rotate,
+  scroll to zoom).
 - **Display strip**: grid size (numPix), colormap, log/linear stretch.
 - **Lower half — a 2-row x 3-column grid**:
   | | col 1 | col 2 | col 3 |
@@ -19,7 +22,10 @@ Single-window layout:
 - **Config panels**:
   - **Multiple lenses**: each with model selection (SIS / SIE / PEMD), own
     parameters (theta_E, shear, ellipticity, center) and **redshift**; add/remove.
-  - **Multiple sources**: each with position/shape and **redshift**; add/remove.
+  - **Multiple sources** — all **extended (resolved)** profiles, selectable per
+    source: `SERSIC_ELLIPSE`, `SERSIC`, `GAUSSIAN_ELLIPSE`, `GAUSSIAN`, each with
+    position, ellipticity, size (`R_sersic` / `sigma`), `n_sersic` and
+    **redshift**; add/remove.
   - Physics via lenstronomy **multi-plane** lensing; one source-plane redshift is
     used as the reference for the 2D scalar fields.
 - Debounced throttled redraw keeps slider dragging smooth.

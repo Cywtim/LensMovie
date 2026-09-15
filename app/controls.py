@@ -79,17 +79,17 @@ class _EntryCard(QGroupBox):
     changed = pyqtSignal()
     remove_requested = pyqtSignal(object)
 
-    def __init__(self, title, editable_model=True, parent=None):
+    def __init__(self, title, models=None, parent=None):
         super().__init__(parent)
         self.setTitle(title)
-        self._editable_model = editable_model
 
         outer = QVBoxLayout(self)
         head = QHBoxLayout()
         self._model_combo = QComboBox()
-        if editable_model:
-            self._model_combo.addItems(["SIS", "SIE", "PEMD"])
+        if models:
+            self._model_combo.addItems(list(models))
             self._model_combo.currentTextChanged.connect(self._on_edit)
+        self._model_combo.setToolTip("profile type")
         self._z_spin = QDoubleSpinBox()
         self._z_spin.setRange(0.05, 5.0)
         self._z_spin.setDecimals(2)
@@ -124,13 +124,13 @@ class _EntryCard(QGroupBox):
         return self._z_spin.value()
 
     def model(self):
-        return self._model_combo.currentText() if self._editable_model else "SERSIC_ELLIPSE"
+        return self._model_combo.currentText()
 
 
 class _LensCard(_EntryCard):
     def __init__(self, lens: lc.LensParams | None = None, parent=None):
         lens = lens or lc.LensParams()
-        super().__init__("Lens", editable_model=True, parent=parent)
+        super().__init__("Lens", models=["SIS", "SIE", "PEMD"], parent=parent)
         self._lens = lens
         self._model_combo.setCurrentText(lens.model if lens.model in ("SIS", "SIE", "PEMD") else "SIS")
         self._z_spin.setValue(lens.redshift)
@@ -162,10 +162,14 @@ class _LensCard(_EntryCard):
 class _SourceCard(_EntryCard):
     def __init__(self, source: lc.SourceParams | None = None, parent=None):
         source = source or lc.SourceParams()
-        super().__init__("Source", editable_model=False, parent=parent)
+        super().__init__("Source", models=lc.SOURCE_MODELS, parent=parent)
+        self._model_combo.setCurrentText(
+            source.model if source.model in lc.SOURCE_MODELS else "SERSIC_ELLIPSE")
         self._z_spin.setValue(source.redshift)
         self.add_slider("amp", "amp", 0.05, 5.0, source.amp, 2)
-        self.add_slider("R_sersic", "R_s", 0.01, 1.0, source.R_sersic, 3)
+        self.add_slider("R_sersic", "R_sersic", 0.01, 1.0, source.R_sersic, 3)
+        self.add_slider("sigma", "sigma", 0.01, 1.0, source.sigma, 3)
+        self.add_slider("n_sersic", "n_sersic", 0.5, 8.0, source.n_sersic, 2)
         self.add_slider("e1", "e1", -0.8, 0.8, source.e1, 2)
         self.add_slider("e2", "e2", -0.8, 0.8, source.e2, 2)
         self.add_slider("center_x", "x", -2.0, 2.0, source.center_x, 2)
@@ -174,9 +178,11 @@ class _SourceCard(_EntryCard):
     def to_params(self) -> lc.SourceParams:
         s = self.sliders
         return lc.SourceParams(
+            model=self.model(),
             amp=s["amp"].value(),
             R_sersic=s["R_sersic"].value(),
-            n_sersic=4.0,
+            n_sersic=s["n_sersic"].value(),
+            sigma=s["sigma"].value(),
             e1=s["e1"].value(),
             e2=s["e2"].value(),
             center_x=s["center_x"].value(),

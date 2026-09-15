@@ -53,8 +53,18 @@ grid stays aligned and each canvas fills its cell on resize.
 
 ## Parameters (per lens / per source)
 Each lens plane carries: model type, theta_E, shear g1/g2, center x/y, **redshift**.
-Each source carries: position x/y, R_sersic, e1/e2, amplitude, **redshift**.
+Each source is an **extended** profile (`SERSIC_ELLIPSE`, `SERSIC`,
+`GAUSSIAN_ELLIPSE`, `GAUSSIAN`) and carries: position, ellipticity, size
+(`R_sersic` or `sigma`), `n_sersic`, amplitude and **redshift**.
 Display: numPix, colormap, stretch.
+
+Source model -> lenstronomy kwargs (all resolved/extended, none are point sources):
+| model | kwargs |
+|---|---|
+| SERSIC_ELLIPSE | amp, R_sersic, n_sersic, e1, e2, center_x, center_y |
+| SERSIC | amp, R_sersic, n_sersic, center_x, center_y |
+| GAUSSIAN_ELLIPSE | amp, sigma, e1, e2, center_x, center_y |
+| GAUSSIAN | amp, sigma, center_x, center_y |
 
 ## Modules
 ```

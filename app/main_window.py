@@ -86,9 +86,11 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.curves_canvas, 1, 1)
         grid.addWidget(self.sources_panel, 1, 2)
 
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 1)
+        # Column widths: the two 2D view columns get more room than the config
+        # column (sliders need less space), keeping the three in balance.
+        grid.setColumnStretch(0, 3)
+        grid.setColumnStretch(1, 3)
+        grid.setColumnStretch(2, 2)
         grid.setRowStretch(0, 1)
         grid.setRowStretch(1, 1)
         root.addLayout(grid, 1)

@@ -35,13 +35,26 @@ from vispy.scene import visuals  # noqa: E402
 
 from . import lensing_calc as lc
 
+# One colour per source, shared by that source's rays, blob and marker.
+_SOURCE_COLORS = [
+    (1.0, 0.6, 0.2), (0.2, 1.0, 0.6), (0.4, 0.8, 1.0),
+    (1.0, 0.4, 0.9), (0.9, 0.9, 0.3),
+]
+
 
 class Scene3D:
     def __init__(self, size=(1080, 300)):
         self.canvas = scene.SceneCanvas(keys="interactive", size=size, show=False,
                                         title="LensMovie 3D — observer / lens / source")
         self.view = self.canvas.central_widget.add_view()
-        self.view.camera = "turntable"
+        # Side-on ("edge-on") default view: the line of sight (X) runs horizontally
+        # while the sky plane (Y-Z) is seen nearly edge-on. A small elevation adds
+        # depth so the lens disks are readable; the user can still drag to rotate.
+        from vispy.scene import cameras
+
+        self.view.camera = cameras.TurntableCamera(
+            elevation=14, azimuth=0, distance=9.5, fov=45, center=(0, 0, 0)
+        )
         self.view.bgcolor = "#111318"
 
         # Geometry bounds at init time (updated per frame too).
@@ -51,6 +64,7 @@ class Scene3D:
 
         self._disks = []
         self._rays = []
+        self._blobs = []
         self._markers = None
         self._add_axes()
         self.update_scene(lc.Config(), _empty_result())
@@ -89,7 +103,7 @@ class Scene3D:
     # ------------------------------------------------------------------ update
     def update_scene(self, config: lc.Config, result: lc.SimResult):
         """Rebuild the edge-on scene from the current config and result."""
-        for v in (self._disks, self._rays, self._markers):
+        for v in (self._disks, self._rays, self._markers, self._blobs):
             items = v if isinstance(v, list) else [v]
             for item in items:
                 if item is not None:
@@ -97,23 +111,30 @@ class Scene3D:
                         item.parent = None
                     except Exception:
                         pass
-        self._disks, self._rays, self._markers = [], [], None
+        self._disks, self._rays, self._markers, self._blobs = [], [], None, []
 
-        zs = sorted({l.redshift for l in config.lenses}) or [0.5]
         z_max = max([l.redshift for l in config.lenses] + [0.3])
 
         # One lens mass disk per lens, perpendicular to the line of sight (y-z
         # plane), positioned along X by its redshift.
         for lens in config.lenses:
             self._disks.append(self._make_lens_disk(lens, z_max))
+        # One extended source blob per source, on the source plane.
+        for si, source in enumerate(config.sources):
+            self._blobs.append(self._make_source_blob(source, si))
         self._add_rays(config)
         self.view.camera.center = (0, 0, 0)
         self.canvas.update()
 
     def _x_of_redshift(self, z, z_max):
-        """Map a redshift to an X (line-of-sight) position between observer and source."""
+        """Map a redshift to an X (line-of-sight) position between observer and source.
+
+        A margin keeps clear gaps between the observer plane, the lens planes and
+        the source plane so the three are visually balanced.
+        """
         f = max(0.0, min(1.0, z / z_max))
-        return -self._L * 0.9 + f * (2 * self._L * 0.9)
+        margin = 0.55
+        return -self._L * margin + f * (2 * self._L * margin)
 
     # ------------------------------------------------------------------ lens
     def _make_lens_disk(self, lens, z_max):
@@ -142,10 +163,43 @@ class Scene3D:
         mesh.opacity = 0.55
         return mesh
 
+    # ------------------------------------------------------- extended source
+    def _make_source_blob(self, source, index):
+        """An extended (resolved) source rendered as a disk on the source plane.
+
+        Its radius follows the profile's effective radius (R_sersic or sigma) so
+        changing the source size visibly changes the blob, and its face colour
+        matches the colour of that source's rays.
+        """
+        n = 24
+        # Scale the angular size up so small sources stay visible, but keep the
+        # relative size ordering between sources.
+        radius = min(max(source.effective_radius() * 2.5, 0.12), 1.4)
+        t = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        r = np.linspace(0, radius, 6)
+        T, R = np.meshgrid(t, r)
+        Y = source.center_y + R * np.cos(T)
+        Z = source.center_x + R * np.sin(T)
+        X = np.full_like(Y, self._L)          # source plane
+
+        positions = np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1).astype(np.float32)
+        faces = _grid_faces(*R.shape)
+
+        # Bright core, dimmer edge (a soft extended blob).
+        rr = (R / max(radius, 1e-6)).ravel()
+        base = _SOURCE_COLORS[index % len(_SOURCE_COLORS)]
+        shade = (1.0 - 0.7 * rr)[:, None]
+        rgb = (np.array(base)[None, :] * shade).astype(np.float32)
+
+        mesh = visuals.Mesh(vertices=positions, faces=faces, vertex_colors=rgb,
+                            shading="smooth", parent=self.view.scene)
+        mesh.set_gl_state(blend=True, depth_test=True)
+        mesh.opacity = 0.9
+        return mesh
+
     # ------------------------------------------------------------------ rays
     def _add_rays(self, config):
-        cmap = [(1.0, 0.6, 0.2), (0.2, 1.0, 0.6), (0.4, 0.8, 1.0),
-                (1.0, 0.4, 0.9), (0.9, 0.9, 0.3)]
+        cmap = _SOURCE_COLORS
         lenses = sorted(config.lenses, key=lambda l: l.redshift)
         z_max = max([l.redshift for l in config.lenses] + [0.3])
 
@@ -178,11 +232,12 @@ class Scene3D:
                     visuals.Line(pos=np.array(pts), color=color, width=2.2,
                                  connect="strip", parent=self.view.scene)
                 )
-            markers.append([self._L, sy, sz])
+            markers.append(([self._L, sy, sz], cmap[si % len(cmap)] + (1.0,)))
         if markers:
             self._markers = visuals.Markers(
-                pos=np.array(markers), face_color=(1, 1, 1, 1),
-                edge_color=(0.2, 0.2, 0.2, 1), size=8, parent=self.view.scene)
+                pos=np.array([m[0] for m in markers]),
+                face_color=np.array([m[1] for m in markers], dtype=np.float32),
+                edge_color=(0.15, 0.15, 0.15, 1), size=6, parent=self.view.scene)
 
     @property
     def native(self):
