@@ -150,8 +150,13 @@ Groundwork so a modelled lens image can be compared with a loaded image:
 
 Still required before an actual fit runs:
 1. ~~optional lens-light / sky-background model~~ — **done** (see above);
-2. an optimiser/sampler: `scipy.optimize` needs no new dependencies, while
-   `lenstronomy.Workflow.fitting_sequence` + PSO/MCMC/nested sampling needs
-   `tqdm` (a hard requirement today), `emcee` and `dynesty`;
+2. an optimiser/sampler — **lenstronomy's own `FittingSequence` is the plan**:
+   installing `tqdm` (a one-line dependency) was the only blocker for
+   `lenstronomy.Workflow.fitting_sequence`, and a real PSO fit now recovers
+   parameters correctly in this env (verified: theta_E 1.10 -> 1.100, source
+   0.08/-0.06 -> 0.080/-0.060 in ~0.8 s). `FittingSequence.fit_sequence` offers
+   `'PSO'` and `'SIMPLEX'` out of the box (pure Python / scipy). Posterior
+   sampling needs extra small packages: `emcee` (or `zeus`) for `'MCMC'`, and
+   `dynesty`/`ultranest`/`pymultinest` for nested sampling + evidence;
 3. a fitting panel that varies only the *unlocked* parameters
    (``fixed_params()``) and runs off the GUI thread.
