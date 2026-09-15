@@ -31,6 +31,9 @@ Single-window layout:
   best-fit values are written back into the sliders, the strip reports
   `χ² initial → best (free, ndof)`, and the data panel can show
   **best-fit model** or **residual**.
+  **You can watch it converge**: while the swarm runs, the data panel draws the
+  current best model live (`fitting… iter i/N`, with the running χ² in the fit
+  strip), so a long fit is not a black box.
 - **Fit-data layer** (inputs for the fit):
   - **pixel scale** (`arcsec/px`) is a control in the display strip and drives the
     model grid, so model and data can share one grid.

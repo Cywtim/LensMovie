@@ -14,8 +14,9 @@ from . import fitting as ft
 class FitWorker(QThread):
     """Runs a PSO fit in a background thread."""
 
-    progressed = pyqtSignal(str)      # human-readable progress line
-    finished_ok = pyqtSignal(object)  # FitResult
+    progressed = pyqtSignal(str)              # human-readable progress line
+    previewed = pyqtSignal(int, int, float, object)  # iter, total, chi2, image
+    finished_ok = pyqtSignal(object)          # FitResult
     failed = pyqtSignal(str)
 
     def __init__(self, config, data, lens_specs, lens_light_specs, source_specs,
@@ -32,11 +33,17 @@ class FitWorker(QThread):
     def cancel(self):
         self._cancelled = True
 
+    def _emit_preview(self, iteration, total, chi2, image):
+        """Called from the fit loop; a preview must never break the fit."""
+        if not self._cancelled:
+            self.previewed.emit(int(iteration), int(total), float(chi2), image)
+
     def run(self):
         try:
             result = ft.run_pso(
                 *self._args,
                 progress=lambda msg: self.progressed.emit(msg),
+                preview=self._emit_preview,
                 **self._kwargs,
             )
         except Exception as exc:                      # never kill the thread silently

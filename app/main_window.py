@@ -382,6 +382,7 @@ class MainWindow(QMainWindow):
         config = self._build_config()
         settings = self.fit_bar.settings()
         self.fit_bar.set_running(True)
+        self._fit_preview_count = 0
         self.fit_bar.set_status("fitting…")
 
         # Lens light parameters live on the same cards as the lens itself.
@@ -391,9 +392,30 @@ class MainWindow(QMainWindow):
             self.sources_panel.param_specs(), parent=self, **settings,
         )
         self._fit_worker.progressed.connect(self.fit_bar.set_status)
+        self._fit_worker.previewed.connect(self._fit_preview)
         self._fit_worker.finished_ok.connect(self._fit_finished)
         self._fit_worker.failed.connect(self._fit_failed)
+        # Show the live model in the data panel while the fit runs.
+        self._ext_mode.setCurrentText("best-fit model")
+        self._fit_preview_count = 0
         self._fit_worker.start()
+
+    def _fit_preview(self, iteration, total, chi2, image):
+        """Draw the swarm's current best model so the fit is visible as it runs."""
+        self._fit_preview_count = getattr(self, "_fit_preview_count", 0) + 1
+        display = self.display_bar.display()
+        try:
+            self.external_canvas.update_external(
+                image,
+                title=f"fitting\u2026 iter {iteration}/{total}",
+                colormap=display["colormap"], stretch=display["stretch"],
+            )
+        except Exception:
+            pass
+        self.fit_bar.set_status(
+            f"fitting\u2026 iter {iteration}/{total}   \u03c7\u00b2 {chi2:.4g}"
+            f"   (preview {self._fit_preview_count})"
+        )
 
     def _cancel_fit(self):
         if self._fit_worker is not None:

@@ -357,6 +357,61 @@ def model_config_from_result(config: lc.Config, kwargs_result: dict,
     )
 
 
+def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
+                            n_particles, n_iterations, sigma_scale,
+                            attempt, attempts, say, preview, preview_interval):
+    """Drive lenstronomy's PSO one iteration at a time, reporting progress.
+
+    ``FittingSequence.fit_sequence([['PSO', ...]])`` runs the whole swarm in one
+    blocking call with no hook, so the swarm is driven directly through
+    ``ParticleSwarmOptimizer.sample()`` (the very generator that
+    ``FittingSequence.pso`` consumes). The starting bounds are built exactly as
+    ``FittingSequence.pso`` builds them. Returns the best-fit kwargs dict.
+    """
+    import time
+
+    param_class = fs.param_class
+    um = fs._updateManager
+    init_pos = np.asarray(param_class.kwargs2args(**um.parameter_state), dtype=float)
+    sigma = np.asarray(param_class.kwargs2args(**um.sigma_kwargs), dtype=float)
+    lo_lim = np.asarray(param_class.kwargs2args(**um.lower_kwargs), dtype=float)
+    hi_lim = np.asarray(param_class.kwargs2args(**um.upper_kwargs), dtype=float)
+
+    lower_start = np.maximum(init_pos - sigma * sigma_scale, lo_lim)
+    upper_start = np.minimum(init_pos + sigma * sigma_scale, hi_lim)
+
+    from lenstronomy.Sampling.Samplers.pso import ParticleSwarmOptimizer
+
+    swarm = ParticleSwarmOptimizer(
+        fs.likelihoodModule.logL, list(lower_start), list(upper_start),
+        particle_count=int(n_particles),
+    )
+
+    best_pos = init_pos
+    last_preview = 0.0
+    for it, _ in enumerate(swarm.sample(max_iter=int(n_iterations), verbose=False)):
+        best_pos = swarm.global_best.position
+
+        now = time.time()
+        if preview is not None and (now - last_preview) >= float(preview_interval):
+            last_preview = now
+            try:
+                kw_i = param_class.args2kwargs(best_pos, bijective=True)
+                cfg_i = model_config_from_result(config, kw_i, data.num_pix,
+                                                 ref_source_index)
+                image_i = lc.render_image(cfg_i)
+                # lenstronomy's logL is -chi2/2, so this needs no extra render.
+                chi2_i = fd.chi2(image_i, data)
+                preview(it + 1, int(n_iterations), chi2_i, image_i)
+            except Exception:
+                pass      # a preview must never break the fit
+
+    say(f"restart {attempt + 1}/{attempts}: swarm finished "
+        f"({int(n_iterations)} iterations)")
+
+    return param_class.args2kwargs(best_pos, bijective=True)
+
+
 def run_pso(
     config: lc.Config,
     data: fd.FitData,
@@ -370,6 +425,8 @@ def run_pso(
     sigma_scale: float = 4.0,
     ref_source_index: int = -1,
     progress=None,
+    preview=None,
+    preview_interval: float = 0.35,
 ) -> FitResult:
     """Run a PSO fit with lenstronomy's own FittingSequence.
 
@@ -377,6 +434,11 @@ def run_pso(
     restarted ``n_restarts`` times, each run is polished with SIMPLEX
     (Nelder-Mead) when ``polish`` is set, and the lowest-chi-squared solution is
     kept.
+
+    ``preview`` (if given) is called as ``preview(iteration, total, chi2, image)``
+    while the swarm runs, so the caller can show the fit converging. It is
+    throttled to at most one call per ``preview_interval`` seconds so the extra
+    rendering cannot dominate the fit's runtime.
 
     Returns a :class:`FitResult` carrying the best-fit
     :class:`~app.lensing_calc.Config`, the model image, the residual and the
@@ -419,20 +481,23 @@ def run_pso(
                 {"image_likelihood": True, "check_bounds": True},
                 kwargs_params, verbose=False,
             )
-            sequence = [["PSO", {
-                "sigma_scale": float(sigma_scale),
-                "n_particles": int(n_particles),
-                "n_iterations": int(n_iterations),
-            }]]
+            kw_res = _run_swarm_with_preview(
+                fs, config, data, ref_source_index,
+                n_particles=int(n_particles), n_iterations=int(n_iterations),
+                sigma_scale=float(sigma_scale), attempt=attempt,
+                attempts=attempts, say=say,
+                preview=preview, preview_interval=preview_interval,
+            )
             if polish:
                 # Refine the swarm's best solution; this is what makes the fit
-                # reliably converge rather than depending on PSO luck.
-                sequence.append(["SIMPLEX", {
+                # reliably converge rather than depending on PSO luck. The swarm
+                # result is pushed into the sequence state first.
+                fs.update_state(kw_res)
+                fs.fit_sequence([["SIMPLEX", {
                     "n_iterations": int(n_iterations),
                     "method": "Nelder-Mead",
-                }])
-            fs.fit_sequence(sequence)
-            kw_res = fs.best_fit()
+                }]])
+                kw_res = fs.best_fit()
             cfg_i = model_config_from_result(config, kw_res, data.num_pix,
                                              ref_source_index)
             chi2_i = fd.chi2(lc.compute(cfg_i).image, data)

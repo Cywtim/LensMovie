@@ -316,6 +316,30 @@ def _fermat_potential(lens_model, kwargs_lens, grid_x, grid_y, ref_x, ref_y):
     return t - t_ref
 
 
+def render_image(config: Config) -> np.ndarray:
+    """Render ONLY the model image (lensed sources + deflector light + sky).
+
+    ``compute`` additionally evaluates the Fermat/time-delay fields, the critical
+    curve, the caustic and the image positions, which is ~30x more expensive. A
+    fit evaluates the model thousands of times, so it must use this cheap path
+    (it is also what the live fit preview draws).
+    """
+    num_pix = int(config.num_pix)
+    delta_pix = float(config.delta_pix)
+    image = np.zeros((num_pix, num_pix))
+    for source in config.sources:
+        lens_model, kwargs_lens = _get_lens_model(config.lenses, source.redshift)
+        image += _render_source_image(
+            lens_model, kwargs_lens, source, num_pix, delta_pix,
+            psf_kernel=config.psf_kernel,
+        )
+    # Deflector light: image plane, unlensed, added once.
+    image += _render_lens_light(config, num_pix, delta_pix)
+    if config.sky_amp:
+        image += float(config.sky_amp)
+    return image
+
+
 def compute(config: Config, ref_source_index: int = -1) -> SimResult:
     """Evaluate the current configuration.
 
@@ -343,26 +367,15 @@ def compute(config: Config, ref_source_index: int = -1) -> SimResult:
 
     try:
         # Lensed image: sum each source's image at its own z_source.
-        image = np.zeros((num_pix, num_pix))
+        image = render_image(config)
         image_positions = []
         for si, source in enumerate(config.sources):
             lens_model, kwargs_lens = _get_lens_model(config.lenses, source.redshift)
-            img = _render_source_image(
-                lens_model, kwargs_lens, source, num_pix, delta_pix,
-                psf_kernel=config.psf_kernel,
-            )
-            image += img
             try:
                 pos = _solve_images(lens_model, kwargs_lens, source, color_idx=si)
                 image_positions.append(pos)
             except Exception:
                 image_positions.append((np.array([]), np.array([]), si))
-
-        # Add the deflector (lens galaxy) light: image plane, not lensed, added once.
-        image += _render_lens_light(config, num_pix, delta_pix)
-        # Constant sky background pedestal.
-        if config.sky_amp:
-            image += float(config.sky_amp)
 
         # 2D fields at the reference source redshift.
         lens_model, kwargs_lens = _get_lens_model(config.lenses, ref_z)

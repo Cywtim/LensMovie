@@ -175,6 +175,18 @@ Notes learned while building it:
 - PSO is stochastic, so ``run_pso`` restarts N times, polishes each with SIMPLEX,
   and keeps the lowest chi-squared solution; ``sigma_scale=4`` gives the initial
   swarm a wide enough spread to find the global solution reliably.
+- ``FittingSequence.fit_sequence([['PSO', ...]])`` is a single blocking call with
+  no progress hook, so ``_run_swarm_with_preview`` drives the swarm directly
+  through ``ParticleSwarmOptimizer.sample()`` — the very generator
+  ``FittingSequence.pso`` consumes — building the starting bounds exactly as that
+  method does, then pushing the result back with ``FittingSequence.update_state``
+  so the SIMPLEX polish continues from it. That is what makes the live preview
+  possible without giving up lenstronomy's own optimiser.
+- Previews use ``lensing_calc.render_image`` (image only) rather than ``compute``,
+  which also does the Fermat/time-delay fields, critical curve, caustic and image
+  positions. Previews are throttled by *time* (0.35 s) so the extra rendering
+  cannot dominate the fit's runtime, and a failing preview is swallowed so it can
+  never break a fit.
 - A fit of the deflector-light + extended-source model recovers injected
   parameters exactly (theta_E 1.10 -> 1.100, source 0.08/-0.06 -> 0.080/-0.060,
   chi2 -> the noise floor) and locked parameters are provably unchanged.

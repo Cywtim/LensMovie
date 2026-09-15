@@ -208,3 +208,71 @@ def test_pso_recovers_a_single_free_parameter():
     # locked shear untouched
     assert res.config.lenses[0].gamma1 == pytest.approx(0.04)
     assert res.config.lenses[0].light_amp == pytest.approx(0.6)
+
+
+# ------------------------------------------------------------------ previews
+def test_render_image_matches_compute_and_is_image_only():
+    """render_image must equal compute().image; it is the cheap path a fit uses."""
+    cfg = _truth_config()
+    assert np.allclose(lc.render_image(cfg), lc.compute(cfg).image)
+    assert np.shape(lc.render_image(cfg)) == (cfg.num_pix, cfg.num_pix)
+
+
+@pytest.mark.slow
+def test_run_pso_emits_converging_previews():
+    """The fit must report intermediate models so the user can watch it."""
+    truth = _truth_config()
+    data = _data_for(truth)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=0.85, gamma1=0.04, gamma2=-0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+    )
+    lens_s, ll_s, src_s = _specs(start, free_lens=("theta_E",))
+
+    seen = []
+    res = ft.run_pso(
+        start, data, lens_s, ll_s, src_s,
+        n_particles=25, n_iterations=80, n_restarts=1, polish=True,
+        # a tiny interval so the test sees plenty of previews
+        preview=lambda it, total, chi2, img: seen.append((it, total, chi2, img)),
+        preview_interval=0.0,
+    )
+
+    assert res.ok, res.error
+    assert len(seen) >= 5, f"expected several previews, got {len(seen)}"
+    for it, total, chi2, img in seen:
+        assert 1 <= it <= total
+        assert np.isfinite(chi2) and chi2 > 0
+        assert img.shape == data.image.shape     # a renderable model each time
+        assert np.isfinite(img).all()
+    # chi2 must come down over the run
+    assert seen[-1][2] < seen[0][2]
+    # and the previews agree with the final answer
+    assert res.chi2_after <= seen[0][2]
+
+
+@pytest.mark.slow
+def test_preview_failure_does_not_break_the_fit():
+    """A broken preview callback must be swallowed, not abort the fit."""
+    truth = _truth_config()
+    data = _data_for(truth)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=0.85, gamma1=0.04, gamma2=-0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+    )
+    lens_s, ll_s, src_s = _specs(start, free_lens=("theta_E",))
+
+    def boom(*a, **k):
+        raise RuntimeError("preview exploded")
+
+    res = ft.run_pso(start, data, lens_s, ll_s, src_s,
+                     n_particles=20, n_iterations=40, n_restarts=1,
+                     preview=boom, preview_interval=0.0)
+    assert res.ok, res.error
+    assert res.chi2_after < res.chi2_before

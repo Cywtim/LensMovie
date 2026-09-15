@@ -633,3 +633,61 @@ def test_curves_panel_uses_the_grid_field_of_view(qapp):
     lo, hi = cv._ax.get_xlim()
     assert np.isclose(lo, -2.475) and np.isclose(hi, 2.475)   # grid FOV, not ±0.3
     cv.deleteLater()
+
+
+@pytest.mark.slow
+def test_gui_shows_live_fit_previews(qapp):
+    """During a fit the data panel must show the swarm's current model."""
+    from PyQt5.QtCore import QEventLoop, QTimer
+
+    from app import lensing_calc as lc
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    truth = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=1.10,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=[lc.SourceParams(amp=1.0, R_sersic=0.12, n_sersic=3.0,
+                                 e1=0.1, e2=-0.1, center_x=0.08, center_y=-0.06)],
+        num_pix=60, delta_pix=0.05,
+    )
+    mock = lc.compute(truth).image
+    sigma = 0.002
+    win._external_array = mock + np.random.RandomState(3).normal(0, sigma, mock.shape)
+    win._noise_array = np.full(mock.shape, sigma)
+    win.display_bar._numpix.setValue(60)
+    win.display_bar._delta_pix.setValue(0.05)
+    card = win.lenses_panel._cards[0]
+    card._light_combo.setCurrentText("SERSIC_ELLIPSE")
+    for name, val in (("light_amp", 0.6), ("light_R_sersic", 0.9),
+                      ("light_n_sersic", 4.0), ("light_e1", 0.15), ("light_e2", 0.05)):
+        card.sliders[name].set_value(val)
+    card.sliders["theta_E"].set_value(0.85)
+    for name, row in card.sliders.items():
+        if name != "theta_E":
+            row.set_fixed(True)
+
+    win.fit_bar._particles.setValue(20)
+    win.fit_bar._iterations.setValue(60)
+    win.fit_bar._restarts.setValue(1)
+
+    seen = []
+    win._start_fit()
+    win._fit_worker.previewed.connect(
+        lambda it, total, chi2, img: seen.append((it, total, chi2)))
+
+    loop = QEventLoop()
+    win._fit_worker.finished_ok.connect(lambda *a: QTimer.singleShot(20, loop.quit))
+    win._fit_worker.failed.connect(lambda *a: QTimer.singleShot(20, loop.quit))
+    QTimer.singleShot(120000, loop.quit)
+    loop.exec_()
+    qapp.processEvents()
+
+    assert len(seen) >= 2, f"expected live previews, got {len(seen)}"
+    # the panel ended up showing the finished best-fit model
+    assert "Best-fit model" in win.external_canvas._ax.get_title()
+    assert win._fit_result is not None
+    win.close()
+    win.deleteLater()
