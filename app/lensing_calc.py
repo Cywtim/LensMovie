@@ -88,6 +88,26 @@ class SourceParams:
         return float(max(self.sigma, 1e-3))
 
 
+def gaussian_psf_kernel(fwhm_arcsec: float, delta_pix: float, size: int = 0) -> np.ndarray:
+    """Build a normalised 2D Gaussian PSF kernel for the given pixel scale.
+
+    ``size`` defaults to an odd kernel spanning ~4 sigma. A ``fwhm_arcsec`` of 0
+    yields a 1x1 delta kernel (no blurring).
+    """
+    if fwhm_arcsec is None or fwhm_arcsec <= 0:
+        return np.array([[1.0]])
+    sigma_pix = (fwhm_arcsec / 2.354820045) / float(delta_pix)
+    if size <= 0:
+        size = int(max(3, 2 * int(np.ceil(3 * sigma_pix)) + 1))
+    if size % 2 == 0:
+        size += 1
+    c = (size - 1) / 2.0
+    y, x = np.mgrid[0:size, 0:size]
+    kernel = np.exp(-((x - c) ** 2 + (y - c) ** 2) / (2 * sigma_pix ** 2))
+    total = kernel.sum()
+    return kernel / total if total > 0 else np.array([[1.0]])
+
+
 @dataclass
 class Config:
     """Full user configuration passed to :func:`compute`."""
@@ -96,6 +116,9 @@ class Config:
     sources: list[SourceParams] = field(default_factory=lambda: [SourceParams()])
     num_pix: int = 150
     delta_pix: float = 0.05
+    # Convolution kernel applied to the model image. The default 1x1 kernel is a
+    # delta function (no seeing); supply a real PSF to match observed data.
+    psf_kernel: np.ndarray | None = None
 
 
 @dataclass
@@ -256,7 +279,8 @@ def compute(config: Config, ref_source_index: int = -1) -> SimResult:
         for si, source in enumerate(config.sources):
             lens_model, kwargs_lens = _get_lens_model(config.lenses, source.redshift)
             img = _render_source_image(
-                lens_model, kwargs_lens, source, num_pix, delta_pix
+                lens_model, kwargs_lens, source, num_pix, delta_pix,
+                psf_kernel=config.psf_kernel,
             )
             image += img
             try:
@@ -319,7 +343,8 @@ def _valid_source_model(model: str) -> str:
     return model if model in SOURCE_MODELS else "SERSIC_ELLIPSE"
 
 
-def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix):
+def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix,
+                         psf_kernel=None):
     from lenstronomy.Data.imaging_data import ImageData
     from lenstronomy.Data.psf import PSF
     from lenstronomy.ImSim.image_model import ImageModel
@@ -339,7 +364,12 @@ def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix):
         "image_data": np.zeros((num_pix, num_pix)),
     }
     data = ImageData(**kwargs_data)
-    psf = PSF(psf_type="PIXEL", pixel_size=delta_pix, kernel_point_source=np.array([[1.0]]))
+    # Convolve with the supplied PSF kernel; a 1x1 kernel means no blurring.
+    kernel = np.asarray(psf_kernel, dtype=float) if psf_kernel is not None \
+        else np.array([[1.0]])
+    if kernel.ndim != 2 or kernel.size == 0:
+        kernel = np.array([[1.0]])
+    psf = PSF(psf_type="PIXEL", pixel_size=delta_pix, kernel_point_source=kernel)
     light_model = LightModel(light_model_list=[_valid_source_model(source.model)])
     kwargs_light = [source.profile_kwargs()]
     image_model = ImageModel(

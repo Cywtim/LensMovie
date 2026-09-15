@@ -379,6 +379,23 @@ class DisplayBar(QWidget):
         self._numpix.setRange(60, 400)
         self._numpix.setValue(150)
         self._numpix.valueChanged.connect(self._emit)
+        # Pixel scale of the model grid. This must match the external data for a
+        # meaningful model-vs-data comparison (fitting).
+        self._delta_pix = QDoubleSpinBox()
+        self._delta_pix.setRange(0.005, 0.5)
+        self._delta_pix.setDecimals(3)
+        self._delta_pix.setSingleStep(0.005)
+        self._delta_pix.setValue(0.05)
+        self._delta_pix.setToolTip("arcsec per pixel of the model grid")
+        self._delta_pix.valueChanged.connect(self._emit)
+        # PSF: Gaussian FWHM in arcsec (0 = no blurring, i.e. a delta PSF).
+        self._psf_fwhm = QDoubleSpinBox()
+        self._psf_fwhm.setRange(0.0, 3.0)
+        self._psf_fwhm.setDecimals(3)
+        self._psf_fwhm.setSingleStep(0.05)
+        self._psf_fwhm.setValue(0.0)
+        self._psf_fwhm.setToolTip("PSF Gaussian FWHM in arcsec (0 = delta PSF)")
+        self._psf_fwhm.valueChanged.connect(self._emit)
         self._cmap = QComboBox()
         self._cmap.addItems(["magma", "viridis", "plasma", "inferno", "gray", "turbo"])
         self._cmap.currentTextChanged.connect(self._emit)
@@ -388,13 +405,21 @@ class DisplayBar(QWidget):
 
         lay.addWidget(QLabel("numPix:"))
         lay.addWidget(self._numpix)
-        lay.addSpacing(12)
+        lay.addSpacing(10)
+        lay.addWidget(QLabel("pixel scale:"))
+        lay.addWidget(self._delta_pix)
+        lay.addWidget(QLabel("″/px"))
+        lay.addSpacing(10)
+        lay.addWidget(QLabel("PSF FWHM:"))
+        lay.addWidget(self._psf_fwhm)
+        lay.addWidget(QLabel("″"))
+        lay.addSpacing(10)
         lay.addWidget(QLabel("colormap:"))
         lay.addWidget(self._cmap)
-        lay.addSpacing(12)
+        lay.addSpacing(10)
         lay.addWidget(QLabel("stretch:"))
         lay.addWidget(self._stretch)
-        lay.addSpacing(18)
+        lay.addSpacing(14)
         # 3D toggle: turning it off hides the 3D scene and skips rebuilding it,
         # which saves the per-update mesh construction / GL upload cost.
         self._three_d = QCheckBox("3D scene")
@@ -413,6 +438,8 @@ class DisplayBar(QWidget):
     def display(self) -> dict:
         return {
             "num_pix": self._numpix.value(),
+            "delta_pix": self._delta_pix.value(),
+            "psf_fwhm": self._psf_fwhm.value(),
             "colormap": self._cmap.currentText(),
             "stretch": self._stretch.currentText(),
         }

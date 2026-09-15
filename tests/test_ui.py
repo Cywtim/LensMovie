@@ -4,6 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import numpy as np
 import pytest
 from PyQt5.QtWidgets import QApplication
 
@@ -270,5 +271,68 @@ def test_lock_survives_a_rerender(qapp):
     row = win.lenses_panel._cards[0].sliders["theta_E"]
     assert row.is_fixed() is True
     assert row.value() == before
+    win.close()
+    win.deleteLater()
+
+
+# ------------------------------------------------- pixel scale / PSF / data
+def test_display_bar_exposes_pixel_scale_and_psf(qapp):
+    from app.controls import DisplayBar
+
+    bar = DisplayBar()
+    d = bar.display()
+    assert d["delta_pix"] == 0.05
+    assert d["psf_fwhm"] == 0.0
+    bar._delta_pix.setValue(0.12)
+    bar._psf_fwhm.setValue(0.6)
+    d = bar.display()
+    assert abs(d["delta_pix"] - 0.12) < 1e-9
+    assert abs(d["psf_fwhm"] - 0.6) < 1e-9
+    bar.deleteLater()
+
+
+def test_config_uses_ui_pixel_scale_and_psf(qapp):
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.display_bar._delta_pix.setValue(0.08)
+    cfg = win._build_config()
+    assert abs(cfg.delta_pix - 0.08) < 1e-9
+    # FWHM 0 -> delta PSF
+    assert np.asarray(win.current_psf_kernel()).shape == (1, 1)
+    win.display_bar._psf_fwhm.setValue(0.5)
+    assert np.asarray(win.current_psf_kernel()).shape[0] > 1
+    win._rerender()
+    assert win._render_ok is True
+    win.close()
+    win.deleteLater()
+
+
+def test_prepare_fit_data_puts_external_image_on_model_grid(qapp):
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.display_bar._numpix.setValue(80)
+    win.display_bar._delta_pix.setValue(0.05)
+    win._external_array = np.random.RandomState(0).rand(200, 200)
+    win._noise_array = np.full((200, 200), 0.05)
+    win._on_grid_chk.setChecked(True)
+    win._rerender()
+
+    fd = win._fit_data
+    assert fd is not None
+    assert fd.image.shape == (80, 80)
+    assert fd.noise.shape == (80, 80)
+    # The data grid matches the model grid, ready for a fit.
+    assert win._build_config().num_pix == 80
+    win.close()
+    win.deleteLater()
+
+
+def test_prepare_fit_data_returns_none_without_image(qapp):
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    assert win.prepare_fit_data() is None
     win.close()
     win.deleteLater()

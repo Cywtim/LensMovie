@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -81,7 +82,7 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self._3d_wrap, 1)
 
         # Square external-image panel, same height as the 3D bar.
-        self.ext_panel = QGroupBox("External image")
+        self.ext_panel = QGroupBox("External image / fit data")
         self.ext_panel.setFixedSize(self._3d_height, self._3d_height)
         ext_lay = QVBoxLayout(self.ext_panel)
         ext_lay.setContentsMargins(4, 4, 4, 4)
@@ -95,6 +96,28 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self._load_btn, 1)
         btn_row.addWidget(self._clear_ext_btn, 0)
         ext_lay.addLayout(btn_row)
+
+        # Optional fitting inputs: noise (1-sigma), mask, PSF kernel.
+        aux_row = QHBoxLayout()
+        self._noise_btn = QPushButton("Noise…")
+        self._noise_btn.clicked.connect(lambda: self._load_aux("noise"))
+        self._mask_btn = QPushButton("Mask…")
+        self._mask_btn.clicked.connect(lambda: self._load_aux("mask"))
+        self._psf_btn = QPushButton("PSF…")
+        self._psf_btn.clicked.connect(lambda: self._load_aux("psf"))
+        for b in (self._noise_btn, self._mask_btn, self._psf_btn):
+            b.setToolTip("Load a same-shape file (npy/fits/…); PSF is a kernel")
+            aux_row.addWidget(b, 1)
+        ext_lay.addLayout(aux_row)
+
+        # Preview the data resampled onto the model grid, so alignment (pixel
+        # scale and centre) can be checked before any fitting.
+        self._on_grid_chk = QCheckBox("preview on model grid")
+        self._on_grid_chk.setToolTip(
+            "Resample the loaded data onto the model grid (numPix / pixel scale)"
+        )
+        self._on_grid_chk.toggled.connect(self._schedule)
+        ext_lay.addWidget(self._on_grid_chk)
         self._ext_label = QLabel("no file loaded")
         self._ext_label.setWordWrap(True)
         self._ext_label.setStyleSheet("color: gray; font-size: 10px;")
@@ -153,6 +176,11 @@ class MainWindow(QMainWindow):
 
         self._last_display = self.display_bar.display()
         self._external_array = None
+        self._noise_array = None
+        self._mask_array = None
+        self._psf_kernel = None
+        self._fit_data = None
+        self._center_offset = (0.0, 0.0)
         self._render_ok = False
         self._rerender()
 
@@ -209,8 +237,65 @@ class MainWindow(QMainWindow):
 
     def _clear_external_image(self):
         self._external_array = None
+        self._fit_data = None
         self.external_canvas.show_message("no file loaded\n\nUse “Load image…” below")
         self._ext_label.setText("no file loaded")
+
+    # ------------------------------------------------- noise / mask / PSF
+    def _load_aux(self, kind: str):
+        """Load the optional noise, mask or PSF file."""
+        from .external_image import ImageLoadError, load_image_file
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, f"Load {kind} file", "",
+            "All supported (*.npy *.npz *.fits *.fit *.fts *.mat *.txt *.csv "
+            "*.dat *.tsv *.png *.jpg *.tif *.bmp);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            array, desc = load_image_file(path)
+        except ImageLoadError as exc:
+            self._ext_label.setText(f"{kind} error: {exc}")
+            self.statusBar().showMessage(f"{kind} load error: {exc}", 6000)
+            return
+
+        if kind == "noise":
+            self._noise_array = array
+        elif kind == "mask":
+            self._mask_array = (array != 0)
+        else:
+            self._psf_kernel = array
+        self.statusBar().showMessage(f"loaded {kind}: {desc}", 4000)
+        self._schedule()
+
+    # ------------------------------------------------- prepared fit data
+    def prepare_fit_data(self):
+        """Build the resampled data bundle on the model grid, or None."""
+        from .fit_data import DataPrepError, prepare_fit_data
+
+        if self._external_array is None:
+            self._fit_data = None
+            return None
+        d = self.display_bar.display()
+        try:
+            self._fit_data = prepare_fit_data(
+                self._external_array,
+                source_delta_pix=d["delta_pix"],   # data scale set by the same control
+                model_num_pix=d["num_pix"],
+                model_delta_pix=d["delta_pix"],
+                center_offset=self._center_offset,
+                noise=self._noise_array,
+                mask=self._mask_array,
+                psf_kernel=self._psf_kernel,
+                psf_fwhm=d["psf_fwhm"],
+            )
+        except DataPrepError as exc:
+            self._fit_data = None
+            self._ext_label.setText(f"prepare error: {exc}")
+            self.statusBar().showMessage(f"fit-data error: {exc}", 6000)
+            return None
+        return self._fit_data
 
     def _schedule(self, *a):
         self._timer.start()
@@ -221,8 +306,16 @@ class MainWindow(QMainWindow):
             lenses=self.lenses_panel.lens_list(),
             sources=self.sources_panel.source_list(),
             num_pix=d["num_pix"],
-            delta_pix=0.05,
+            delta_pix=d["delta_pix"],
+            psf_kernel=self.current_psf_kernel(),
         )
+
+    def current_psf_kernel(self):
+        """The convolution kernel for the model: a loaded kernel, else from FWHM."""
+        if self._psf_kernel is not None:
+            return self._psf_kernel
+        d = self.display_bar.display()
+        return lc.gaussian_psf_kernel(d["psf_fwhm"], d["delta_pix"])
 
     def _rerender(self):
         config = self._build_config()
@@ -252,14 +345,26 @@ class MainWindow(QMainWindow):
         )
 
         # Keep an already-loaded external matrix in sync with the display settings.
+        # With "preview on model grid" checked, show the resampled data instead so
+        # the alignment (pixel scale / centre) can be verified before fitting.
         if self._external_array is not None:
             try:
-                self.external_canvas.update_external(
-                    self._external_array,
-                    title=f"External image {self._external_array.shape[0]}"
-                          f"x{self._external_array.shape[1]}",
-                    colormap=display["colormap"], stretch=display["stretch"],
-                )
+                if self._on_grid_chk.isChecked():
+                    fd = self.prepare_fit_data()
+                    if fd is not None:
+                        self.external_canvas.update_external(
+                            fd.image,
+                            title=f"On model grid {fd.num_pix}x{fd.num_pix}",
+                            colormap=display["colormap"], stretch=display["stretch"],
+                        )
+                        self._ext_label.setText(fd.summary())
+                else:
+                    self.external_canvas.update_external(
+                        self._external_array,
+                        title=f"External image {self._external_array.shape[0]}"
+                              f"x{self._external_array.shape[1]}",
+                        colormap=display["colormap"], stretch=display["stretch"],
+                    )
             except Exception:
                 pass
 

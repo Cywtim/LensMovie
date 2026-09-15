@@ -66,7 +66,14 @@ Each lens plane carries: model type, theta_E, shear g1/g2, center x/y, **redshif
 Each source is an **extended** profile (`SERSIC_ELLIPSE`, `SERSIC`,
 `GAUSSIAN_ELLIPSE`, `GAUSSIAN`) and carries: position, ellipticity, size
 (`R_sersic` or `sigma`), `n_sersic`, amplitude and **redshift**.
-Display: numPix, colormap, stretch.
+Display: numPix, **pixel scale (delta_pix, arcsec/px)**, **PSF FWHM**, colormap,
+stretch.
+
+Every parameter slider carries a **fix (lock)** toggle. Fixing freezes the value:
+the slider is disabled and both ``_Slider.set_value`` and a direct
+``QSlider.setValue`` are reverted, so no code path can change it. Unfixing is
+reserved for the user — ``_Slider.set_fixed(False)`` raises ``PermissionError``
+unless called with ``user=True``, which only the lock button handler does.
 
 Source model -> lenstronomy kwargs (all resolved/extended, none are point sources):
 | model | kwargs |
@@ -86,6 +93,7 @@ LensMovie/
     controls.py    # LensesPanel + SourcesPanel + DisplayBar (add/remove entries)
     plotting.py    # matplotlib canvases: Field/Image/Curves/External
     external_image.py # load user-supplied matrices (npy/fits/mat/text/images)
+    fit_data.py    # resample data/noise/mask onto the model grid + chi2
     lensing_calc.py# lenstronomy physics: multi-plane sim, arrival time (Fermat), cc/caustic, image positions
     scene3d.py     # vispy -> edge-on 3D scene (top bar)
   pyproject.toml
@@ -120,3 +128,26 @@ conda run -n lenstronomy_env python -m app.main
     `connect="strip"`.
   * `Markers`, `Mesh(vertex_colors=...)`, and single-colour `Line` all work fine.
 - The 3D view is optional: `MainWindow` falls back to 2D-only if vispy fails.
+
+
+## Fitting readiness (data layer)
+Groundwork so a modelled lens image can be compared with a loaded image:
+
+- ``Config.delta_pix`` is user-settable (display strip) and defines the model grid;
+  ``Config.psf_kernel`` convolves the model. ``lensing_calc.gaussian_psf_kernel``
+  builds a normalised kernel from a FWHM (0 -> 1x1 delta).
+- ``fit_data.prepare_fit_data`` puts a loaded image (with optional noise and mask)
+  onto the model grid: resampling for a pixel-scale change, and a ``center_offset``
+  that centres the grid on the lens. Invalid noise pixels are excluded from the mask.
+- ``fit_data.FitData`` bundles image/noise/mask/PSF on the grid;
+  ``fit_data.chi2`` evaluates a chi-squared over the usable pixels;
+  ``fit_data.effective_psf_kernel`` returns the loaded kernel or one from the FWHM.
+
+Still required before an actual fit runs:
+1. optional lens-light / sky-background model so lens galaxy light is not absorbed
+   into the source;
+2. an optimiser/sampler: `scipy.optimize` needs no new dependencies, while
+   `lenstronomy.Workflow.fitting_sequence` + PSO/MCMC/nested sampling needs
+   `tqdm` (a hard requirement today), `emcee` and `dynesty`;
+3. a fitting panel that varies only the *unlocked* parameters
+   (``fixed_params()``) and runs off the GUI thread.
