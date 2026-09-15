@@ -6,14 +6,23 @@ user-controlled parameters. Real-time re-render of both a 2D image-plane view an
 interactive 3D scene.
 
 ## Confirmed design decisions (from user)
-- **Lens model**: start with SIS, extensible to more models later.
-- **Interaction**: parameter sliders re-render in real time.
-- **3D**: real interactive 3D scene (GPU, Vispy) rendering a lens-mass plane +
-  light-ray schematic, linked to the same parameters and updated live.
-- **Layout**: single window — parameter panel left; 2D image (matplotlib) and 3D
-  scene (Vispy) on the right.
-- **Build order**: Phase 1 = 2D only (no new deps, quick to verify) — **done**;
-  Phase 2 = add 3D — **done**.
+- **Lens model**: multiple lens planes, each selectable (SIS / SPEP-ELLIPSE / PEMD,
+  extensible), each with its own redshift and parameters, addable/removable.
+- **Source**: multiple sources, each with position/shape and its own redshift,
+  addable/removable.
+- **Interaction**: parameter controls re-render in real time.
+- **3D**: real interactive 3D scene (GPU, Vispy) rendered as a **full-width bar
+  across the top** of the window (lens-mass planes + light-ray schematic).
+- **Layout** (single window):
+  - Top: 3D scene (Vispy), full width.
+  - Middle-left: 2D display area, two columns — Fermat potential + time-delay on
+    the left; lensed image + critical curve/caustic on the right.
+  - Right: config panel for the multiple lenses and multiple sources.
+- **Physics**: lenstronomy multi-plane lensing (`LensModel(..., multi_plane=True,
+  lens_redshift_list=[...], z_source=...)`); Fermat potential / time delay from
+  `arrival_time`; critical curve + caustic from `LensModelExtensions`.
+- **Build order**: Phase 1 = 2D only (**done**); Phase 2 = add 3D (**done**);
+  Phase 3 = multi-plane, multi-lens/multi-source + new layout (**done**).
 
 ## Tech stack
 | Layer     | Choice                                        |
@@ -25,30 +34,23 @@ interactive 3D scene.
 
 ## Window layout (single window)
 ```
-+------------------+-----------------------------------+
-|  Parameter panel  |  2D image plane (matplotlib)       |
-|  - Lens params    |                                  |
-|  - Source params  +-----------------------------------+
-|  - Display        |  3D scene (vispy)                |
-|    settings       |  lens mass plane + rays          |
-|  [Refresh]        |                                  |
-+------------------+-----------------------------------+
++-----------------------------------------------------------------------------+
+|                          3D scene (Vispy)  — full width bar                  |
++--------------------------+--------------------------+------------------------+
+|  Fermat potential (2D)   |   Lens image (2D)        |  Lenses (config list):  |
+|                          |   + critical curve       |    lens 1: model sel    |
+|  Time delay (2D)         |   + caustic              |    + params + redshift  |
+|                          |                          |    lens 2: ... (add/rm) |
+|                          |                          |  Sources (config list): |
+|                          |                          |    source 1: pos/shape  |
+|                          |                          |    + redshift (add/rm)  |
++--------------------------+--------------------------+------------------------+
 ```
 
-## Parameters
-| Group     | Parameter        | Default | Range      |
-|-----------|------------------|---------|------------|
-| Lens      | theta_E (arcsec) | 1.0     | 0.2 – 3.0  |
-|           | shear gamma1     | 0.05    | -0.3 – 0.3 |
-|           | shear gamma2     | 0.0     | -0.3 – 0.3 |
-|           | lens center x/y  | 0, 0    | -2 – 2     |
-| Source    | position x/y     | 0.1, -0.1| -2 – 2    |
-|           | R_sersic (arcsec)| 0.1     | 0.02 – 1.0 |
-|           | e1, e2           | 0.1, -0.2 | -0.8 – 0.8 |
-|           | amplitude        | 1.0     | 0.1 – 5    |
-| Display   | numPix           | 150     | 60 – 400   |
-|           | colormap         | viridis | (list)     |
-|           | stretch          | log     | log/linear |
+## Parameters (per lens / per source)
+Each lens plane carries: model type, theta_E, shear g1/g2, center x/y, **redshift**.
+Each source carries: position x/y, R_sersic, e1/e2, amplitude, **redshift**.
+Display: numPix, colormap, stretch.
 
 ## Modules
 ```
@@ -56,19 +58,24 @@ LensMovie/
   app/
     __init__.py
     main.py        # entry point
-    main_window.py # main window, layout, signal wiring
-    controls.py    # parameter slider panel
-    sim2d.py       # lenstronomy -> 2D image array (render() function)
-    scene3d.py     # vispy -> 3D scene (Phase 2)
+    main_window.py # main window: top 3D bar, left 2D cols, right config panel
+    controls.py    # multi-lens + multi-source configurable panel (add/remove)
+    plotting.py    # matplotlib canvases: image/cc/caustic, Fermat potential, time delay
+    lensing_calc.py# lenstronomy physics: multi-plane sim, arrival time (Fermat), cc/caustic, image positions
+    scene3d.py     # vispy -> 3D scene (top bar)
   pyproject.toml
   DESIGN.md
   README.md
 ```
 
-## Simulation core (sim2d)
-`render(kwargs_lens, kwargs_light, num_pix, delta_pix) -> np.ndarray`
-- Wraps lenstronomy LensModel/LightModel/Data/PSF/ImageModel.
-- Validated: SIS + SHEAR lens, SERSIC_ELLIPSE source, PIXEL PSF with 1x1 kernel.
+## Physics core (lensing_calc)
+- `LensModel(..., multi_plane=True, lens_redshift_list=[...], z_source=...)`.
+  Multiple source redshifts ⇒ rebuild the LensModel per source z_source.
+- Lensed image: `ImageModel` (LightModel per source, ImageData PIXEL PSF 1x1).
+- Fermat potential / time delay: `lens_model.arrival_time` over the 2D grid.
+- Critical curve + caustic: `LensModelExtensions.critical_curve_caustics`.
+- Image positions: `LensEquationSolver.findBrightImage`.
+- All API paths validated against lenstronomy 1.13.2 in the conda env.
 
 ## Run
 ```bash

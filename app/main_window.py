@@ -1,8 +1,15 @@
-"""Main window: left parameter panel + right views (2D image + 3D scene).
+"""Main window: top 3D bar, middle 2D two-column area, right config panel.
 
-Phase 2 wires the 3D vispy scene (lens mass plane + rays) alongside the 2D
-lensed image. Both views update from the same slider parameters. The 3D view is
-optional: if vispy cannot initialize, the app degrades gracefully to 2D only.
+Layout (single window):
+
+  +-------------------------------------------------------------+
+  |                        3D scene (Vispy)                      |
+  +---------------------+---------------------+-----------------+
+  | Fermat potential    | Lensed image        | Config panel     |
+  | Time delay          | + cc/caustic/images |  lenses/sources  |
+  +---------------------+---------------------+-----------------+
+
+All views are driven by one :class:`lensing_calc.Config` supplied by the panel.
 """
 
 from __future__ import annotations
@@ -12,102 +19,117 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QSplitter,
+    QVBoxLayout,
     QWidget,
 )
 
-from . import sim2d
-from .controls import ParameterPanel
-from .plotting import ImageCanvas
+from . import lensing_calc as lc
+from .controls import ConfigPanel
+from .plotting import FieldCanvas, ImageCanvas
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LensMovie — Interactive Lensing Viewer")
-        self.resize(1300, 800)
+        self.resize(1440, 900)
 
         central = QWidget()
         self.setCentralWidget(central)
-        layout = QHBoxLayout(central)
+        root = QVBoxLayout(central)
 
-        # Left: parameter panel
-        self.controls = ParameterPanel()
-        layout.addWidget(self.controls, 0)
-
-        # Right: vertical stack of 2D image and 3D scene
-        right = QSplitter()
-        right.setOrientation(1)  # vertical
-
-        self.canvas = ImageCanvas()
-        right.addWidget(self.canvas)
-
-        # Load 3D scene (defensive: degrade gracefully if unavailable).
+        # ----------------------------------------------------------------- top 3D bar
         self.scene3d = None
+        self._3d_widget = None
+        self._3d_wrap = QWidget()
+        self._3d_lay = QHBoxLayout(self._3d_wrap)
+        self._3d_lay.setContentsMargins(0, 0, 0, 0)
         try:
             from .scene3d import Scene3D
 
-            self.scene3d = Scene3D(size=(460, 360))
-            right.addWidget(self.scene3d.native)
-        except Exception as exc:  # vispy/GL unavailable
+            self.scene3d = Scene3D(size=(1400, 300))
+            self._3d_widget = self.scene3d.native
+            self._3d_lay.addWidget(self._3d_widget)
+        except Exception as exc:
             self.statusBar().showMessage(f"3D scene unavailable: {exc}")
+            self._3d_wrap.hide()
+        root.addWidget(self._3d_wrap)
 
-        right.setSizes([350, 300])
-        layout.addWidget(right, 1)
+        # ----------------------------------------------------------------- middle
+        middle = QSplitter()
+        middle.setOrientation(0)  # horizontal
 
-        # Throttled real-time re-render
+        # Left 2D two-column block
+        leftblock = QWidget()
+        leftlay = QHBoxLayout(leftblock)
+        leftlay.setContentsMargins(4, 4, 4, 4)
+        col1 = QVBoxLayout()
+        self.fermat_canvas = FieldCanvas("Fermat potential (relative)")
+        self.delay_canvas = FieldCanvas("Time delay (relative)")
+        col1.addWidget(self.fermat_canvas)
+        col1.addWidget(self.delay_canvas)
+        col2 = QVBoxLayout()
+        self.image_canvas = ImageCanvas()
+        col2.addWidget(self.image_canvas)
+        leftlay.addLayout(col1, 1)
+        leftlay.addLayout(col2, 1)
+        middle.addWidget(leftblock)
+
+        # Right config panel
+        self.controls = ConfigPanel()
+        middle.addWidget(self.controls)
+
+        middle.setSizes([900, 340])
+        root.addWidget(middle, 1)
+
+        # Throttled redraw.
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.setInterval(40)  # ~25 Hz max redraw
+        self._timer.setInterval(50)
         self._timer.timeout.connect(self._rerender)
 
-        self.controls.parametersChanged.connect(self._schedule_rerender)
-
+        self.controls.configChanged.connect(self._schedule)
+        self._last_config = self.controls.as_config()
         self._render_ok = False
         self._rerender()
 
-    def _schedule_rerender(self, _params):
-        # Restart the debounce timer on every change.
+    def _schedule(self, *a):
         self._timer.start()
 
     def _rerender(self):
-        params = self.controls.as_dict()
-        lens = params["lens"]
-        source = params["source"]
-        display = params["display"]
-        num_pix = int(display["num_pix"])
+        config = self.controls.as_config()
+        display = self.controls.display()
 
-        delta_pix = 0.05
-        half = num_pix / 2 * delta_pix
-        extent = (-half, half, -half, half)
-
-        try:
-            image = sim2d.render(
-                lens=lens,
-                source=source,
-                num_pix=num_pix,
-                delta_pix=delta_pix,
-            )
-        except Exception as exc:  # keep the UI alive if a render fails
-            self.canvas.clear()
-            self.statusBar().showMessage(f"render error: {exc}", 5000)
+        result = lc.compute(config)
+        if not result.ok:
+            self.statusBar().showMessage(f"render error: {result.error}", 6000)
             self._render_ok = False
             return
 
-        self.canvas.update_image(
-            image,
-            extent_arcsec=extent,
-            colormap=display["colormap"],
-            stretch=display["stretch"],
+        num_pix, delta = config.num_pix, config.delta_pix
+        self.image_canvas.update_image(
+            result.image, num_pix, delta,
+            result.cc_ra, result.cc_dec, result.caustic_ra, result.caustic_dec,
+            result.image_positions,
+            colormap=display["colormap"], stretch=display["stretch"],
+        )
+        self.fermat_canvas.update_field(
+            result.fermat, num_pix, delta,
+            colormap=display["colormap"], stretch="linear", sym=True,
+        )
+        self.delay_canvas.update_field(
+            result.time_delay, num_pix, delta,
+            colormap=display["colormap"], stretch=display["stretch"],
         )
 
-        # Update the 3D scene with the same parameters (best effort).
         if self.scene3d is not None:
             try:
-                self.scene3d.update_scene(lens=lens, source=source)
+                self.scene3d.update_scene(config, result)
             except Exception as exc:
                 self.statusBar().showMessage(f"3D update error: {exc}", 5000)
 
         self.statusBar().showMessage(
-            f"grid {num_pix}²  max={image.max():.3e}", 2000
+            f"lenses={len(config.lenses)} sources={len(config.sources)} "
+            f"grid={num_pix}²  ref_z={result.ref_z_source:.2f}", 3000
         )
         self._render_ok = True
