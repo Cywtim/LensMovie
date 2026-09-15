@@ -233,7 +233,9 @@ def compute(config: Config, ref_source_index: int = -1) -> SimResult:
     """
     num_pix = int(config.num_pix)
     delta_pix = float(config.delta_pix)
-    half = num_pix / 2 * delta_pix
+    # Same convention as lenstronomy's make_grid (see _render_source_image):
+    # the sky grid is symmetric about (0, 0) and spans +/- (num_pix/2 - 0.5)*delta.
+    half = (num_pix / 2 - 0.5) * delta_pix
     axis = np.linspace(-half, half, num_pix)
     grid_x, grid_y = np.meshgrid(axis, axis)
     extent = (-half, half, -half, half)
@@ -322,11 +324,18 @@ def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix):
     from lenstronomy.Data.psf import PSF
     from lenstronomy.ImSim.image_model import ImageModel
     from lenstronomy.LightModel.light_model import LightModel
+    from lenstronomy.Util import util
 
+    # Use lenstronomy's own grid convention so the sky grid is centred on the
+    # lens. ``make_grid`` returns coordinates spanning +/- (num_pix/2 - 0.5) *
+    # delta_pix, i.e. symmetric about (0, 0); its first values are the correct
+    # ra/dec origin of pixel (0, 0). Getting this wrong puts the lens outside
+    # the field of view and the image no longer looks lensed.
+    x_grid, y_grid = util.make_grid(num_pix, delta_pix)
     kwargs_data = {
-        "ra_at_xy_0": -num_pix / 2 * delta_pix,
-        "dec_at_xy_0": num_pix / 2 * delta_pix,
-        "transform_pix2angle": np.array([[1, 0], [0, 1]]) * delta_pix,
+        "ra_at_xy_0": x_grid[0],
+        "dec_at_xy_0": y_grid[0],
+        "transform_pix2angle": np.array([[delta_pix, 0], [0, delta_pix]]),
         "image_data": np.zeros((num_pix, num_pix)),
     }
     data = ImageData(**kwargs_data)

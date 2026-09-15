@@ -16,7 +16,9 @@ from PyQt5.QtWidgets import QSizePolicy
 
 
 def _extent(num_pix, delta_pix):
-    half = num_pix / 2 * delta_pix
+    # Matches lenstronomy's make_grid span so overlays (critical curve, caustic,
+    # image positions) line up exactly with the rendered image.
+    half = (num_pix / 2 - 0.5) * delta_pix
     return (-half, half, -half, half)
 
 
