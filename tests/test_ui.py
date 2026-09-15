@@ -367,3 +367,57 @@ def test_load_aux_noise_mask_psf(qapp, tmp_path, monkeypatch):
     assert win._render_ok is True
     win.close()
     win.deleteLater()
+
+
+# --------------------------------------------------- lens light / sky in the UI
+def test_lens_card_exposes_light_model_and_disables_sliders(qapp):
+    from app.controls import LensesPanel
+
+    panel = LensesPanel()
+    card = panel._cards[0]
+    items = [card._light_combo.itemText(i) for i in range(card._light_combo.count())]
+    assert items == ["NONE", "SERSIC_ELLIPSE", "SERSIC", "GAUSSIAN_ELLIPSE", "GAUSSIAN"]
+    # Default: no deflector light, so its sliders are disabled.
+    assert card.light_model() == "NONE"
+    assert card.sliders["light_amp"].isEnabled() is False
+    # Turning light on enables the sliders and reaches the params.
+    card._light_combo.setCurrentText("SERSIC_ELLIPSE")
+    assert card.sliders["light_amp"].isEnabled() is True
+    card.sliders["light_amp"].set_value(0.4)
+    p = card.to_params()
+    assert p.light_model == "SERSIC_ELLIPSE"
+    assert abs(p.light_amp - 0.4) < 0.01
+    panel.deleteLater()
+
+
+def test_lens_light_reaches_the_rendered_model(qapp):
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    card = win.lenses_panel._cards[0]
+    before = win._build_config()
+    assert before.lenses[0].has_light() is False
+
+    card._light_combo.setCurrentText("SERSIC_ELLIPSE")
+    card.sliders["light_amp"].set_value(0.5)
+    win._rerender()
+    cfg = win._build_config()
+    assert cfg.lenses[0].has_light() is True
+    assert win._render_ok is True
+
+    from app import lensing_calc as lc
+    assert not np.allclose(lc.compute(before).image, lc.compute(cfg).image)
+    win.close()
+    win.deleteLater()
+
+
+def test_sky_control_reaches_config(qapp):
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.display_bar._sky.setValue(0.004)
+    assert abs(win._build_config().sky_amp - 0.004) < 1e-9
+    win._rerender()
+    assert win._render_ok is True
+    win.close()
+    win.deleteLater()

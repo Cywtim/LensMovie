@@ -41,6 +41,13 @@ Single-window layout:
 - **Config panels**:
   - **Multiple lenses**: each with model selection (SIS / SIE / PEMD), own
     parameters (theta_E, shear, ellipticity, center) and **redshift**; add/remove.
+  - **Deflector (lens galaxy) light per lens**: a light-model selector
+    (`NONE` / `SERSIC_ELLIPSE` / `SERSIC` / `GAUSSIAN_ELLIPSE` / `GAUSSIAN`) with
+    its own amplitude, size, Sersic index, ellipticity and Gaussian sigma. This
+    light sits in the image plane and is **not lensed**. It matters for real data:
+    without it the deflector's light would be absorbed into the source by a fit.
+    Its sliders are disabled while the model is `NONE`.
+  - **Sky background**: a constant pedestal added to the model image (display strip).
   - **Multiple sources** — all **extended (resolved)** profiles, selectable per
     source: `SERSIC_ELLIPSE`, `SERSIC`, `GAUSSIAN_ELLIPSE`, `GAUSSIAN`, each with
     position, ellipticity, size (`R_sersic` / `sigma`), `n_sersic` and

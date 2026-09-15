@@ -231,6 +231,37 @@ class _LensCard(_EntryCard):
         self.add_slider("center_x", "x", -2.0, 2.0, lens.center_x, 2)
         self.add_slider("center_y", "y", -2.0, 2.0, lens.center_y, 2)
 
+        # --- deflector (lens galaxy) light ---------------------------------
+        # Unlensed light from the lens galaxy itself; needed so its light is not
+        # absorbed into the source when fitting real data.
+        self.form.addRow(QLabel("<i>— lens light —</i>"))
+        self._light_combo = QComboBox()
+        self._light_combo.addItems(lc.LENS_LIGHT_MODELS)
+        self._light_combo.setCurrentText(
+            lens.light_model if lens.light_model in lc.LENS_LIGHT_MODELS else "NONE")
+        self._light_combo.currentTextChanged.connect(self._on_edit)
+        self._light_combo.setToolTip("light profile of the deflector galaxy")
+        self.form.addRow("light:", self._light_combo)
+        self.add_slider("light_amp", "L amp", 0.0, 5.0, lens.light_amp, 3)
+        self.add_slider("light_R_sersic", "L R_s", 0.05, 3.0, lens.light_R_sersic, 2)
+        self.add_slider("light_n_sersic", "L n", 0.5, 8.0, lens.light_n_sersic, 2)
+        self.add_slider("light_sigma", "L σ", 0.05, 3.0, lens.light_sigma, 2)
+        self.add_slider("light_e1", "L e1", -0.8, 0.8, lens.light_e1, 2)
+        self.add_slider("light_e2", "L e2", -0.8, 0.8, lens.light_e2, 2)
+
+        self._light_combo.currentTextChanged.connect(self._sync_light_enabled)
+        self._sync_light_enabled()
+
+    def _sync_light_enabled(self, *a):
+        """Grey out the light sliders when the lens emits no light."""
+        on = self._light_combo.currentText() != "NONE"
+        for name in ("light_amp", "light_R_sersic", "light_n_sersic",
+                     "light_sigma", "light_e1", "light_e2"):
+            self.sliders[name].setEnabled(on)
+
+    def light_model(self) -> str:
+        return self._light_combo.currentText()
+
     def to_params(self) -> lc.LensParams:
         s = self.sliders
         return lc.LensParams(
@@ -244,6 +275,13 @@ class _LensCard(_EntryCard):
             e2=s["e2"].value(),
             gamma=s["gamma"].value(),
             redshift=self.redshift(),
+            light_model=self.light_model(),
+            light_amp=s["light_amp"].value(),
+            light_R_sersic=s["light_R_sersic"].value(),
+            light_n_sersic=s["light_n_sersic"].value(),
+            light_sigma=s["light_sigma"].value(),
+            light_e1=s["light_e1"].value(),
+            light_e2=s["light_e2"].value(),
         )
 
 
@@ -419,6 +457,17 @@ class DisplayBar(QWidget):
         lay.addSpacing(10)
         lay.addWidget(QLabel("stretch:"))
         lay.addWidget(self._stretch)
+        lay.addSpacing(10)
+        # Constant sky background pedestal added to the model image.
+        self._sky = QDoubleSpinBox()
+        self._sky.setRange(0.0, 1.0)
+        self._sky.setDecimals(4)
+        self._sky.setSingleStep(0.001)
+        self._sky.setValue(0.0)
+        self._sky.setToolTip("constant sky background level added to the model")
+        self._sky.valueChanged.connect(self._emit)
+        lay.addWidget(QLabel("sky:"))
+        lay.addWidget(self._sky)
         lay.addSpacing(14)
         # 3D toggle: turning it off hides the 3D scene and skips rebuilding it,
         # which saves the per-update mesh construction / GL upload cost.
@@ -440,6 +489,7 @@ class DisplayBar(QWidget):
             "num_pix": self._numpix.value(),
             "delta_pix": self._delta_pix.value(),
             "psf_fwhm": self._psf_fwhm.value(),
+            "sky_amp": self._sky.value(),
             "colormap": self._cmap.currentText(),
             "stretch": self._stretch.currentText(),
         }

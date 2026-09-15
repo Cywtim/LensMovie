@@ -112,3 +112,69 @@ def test_lensed_image_is_centred_and_ring_shaped():
     assert peak_px >= 9, f"expected a ring, radial peak at {peak_px}px"
     # ring radius should be near theta_E in pixels (1.0 arcsec / 0.05)
     assert abs(peak_px - 20) < 10, f"ring at {peak_px}px, expected ~20px"
+
+
+# ------------------------------------------------------- lens (deflector) light
+def test_lens_light_absent_by_default():
+    lens = lc.LensParams()
+    assert lens.light_model == "NONE"
+    assert lens.has_light() is False
+    cfg = lc.Config(lenses=[lens], num_pix=70)
+    assert lc._lens_light_components(cfg) == ([], [])
+
+
+def test_lens_light_adds_to_the_model_image():
+    nolight = lc.compute(lc.Config(num_pix=100))
+    lit = lc.compute(lc.Config(
+        lenses=[lc.LensParams(light_model="SERSIC_ELLIPSE", light_amp=0.5,
+                              light_R_sersic=0.8)],
+        num_pix=100,
+    ))
+    assert lit.ok
+    assert not np.allclose(nolight.image, lit.image)
+    assert lit.image.max() > nolight.image.max()
+
+
+def test_lens_light_only_render_is_centred():
+    """With a negligible source, the image is the unlensed deflector light."""
+    cfg = lc.Config(
+        lenses=[lc.LensParams(light_model="SERSIC_ELLIPSE", light_amp=1.0,
+                              light_R_sersic=0.8)],
+        sources=[lc.SourceParams(amp=1e-14)],
+        num_pix=100,
+    )
+    res = lc.compute(cfg)
+    assert res.ok
+    n = res.image.shape[0]
+    ys, xs = np.nonzero(res.image > res.image.max() * 0.5)
+    assert abs(xs.mean() - (n - 1) / 2) < 0.1 * n
+    assert abs(ys.mean() - (n - 1) / 2) < 0.1 * n
+
+
+def test_all_lens_light_models_compute():
+    for m in lc.LENS_LIGHT_MODELS:
+        lens = lc.LensParams(light_model=m, light_amp=0.3)
+        res = lc.compute(lc.Config(lenses=[lens], num_pix=60))
+        assert res.ok, f"{m}: {res.error}"
+
+
+def test_lens_light_kwargs_per_model():
+    se = lc.LensParams(light_model="SERSIC_ELLIPSE").light_kwargs()
+    assert "R_sersic" in se and "e1" in se
+    s = lc.LensParams(light_model="SERSIC").light_kwargs()
+    assert "R_sersic" in s and "e1" not in s
+    ge = lc.LensParams(light_model="GAUSSIAN_ELLIPSE").light_kwargs()
+    assert "sigma" in ge and "e1" in ge
+    # the deflector light follows the lens centre
+    k = lc.LensParams(light_model="SERSIC", center_x=0.3, center_y=-0.2).light_kwargs()
+    assert k["center_x"] == 0.3 and k["center_y"] == -0.2
+
+
+def test_sky_background_pedestal():
+    base = lc.compute(lc.Config(num_pix=50))
+    sky = lc.compute(lc.Config(num_pix=50, sky_amp=0.02))
+    assert sky.ok
+    # The pedestal raises every pixel by exactly sky_amp.
+    assert np.allclose(sky.image - base.image, 0.02, atol=1e-9)
+    assert sky.image.min() > base.image.min()
+    assert base.image.min() < 1e-3

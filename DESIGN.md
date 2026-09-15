@@ -63,6 +63,11 @@ Top row notes:
 
 ## Parameters (per lens / per source)
 Each lens plane carries: model type, theta_E, shear g1/g2, center x/y, **redshift**.
+Each lens also carries **deflector light**: `light_model`
+(`NONE` / `SERSIC_ELLIPSE` / `SERSIC` / `GAUSSIAN_ELLIPSE` / `GAUSSIAN`) with
+`light_amp`, `light_R_sersic`, `light_n_sersic`, `light_sigma`, `light_e1/e2`.
+This is image-plane light and is **not lensed**; it is rendered once and added to
+the model image (`_render_lens_light`). `Config.sky_amp` adds a constant pedestal.
 Each source is an **extended** profile (`SERSIC_ELLIPSE`, `SERSIC`,
 `GAUSSIAN_ELLIPSE`, `GAUSSIAN`) and carries: position, ellipticity, size
 (`R_sersic` or `sigma`), `n_sersic`, amplitude and **redshift**.
@@ -144,8 +149,7 @@ Groundwork so a modelled lens image can be compared with a loaded image:
   ``fit_data.effective_psf_kernel`` returns the loaded kernel or one from the FWHM.
 
 Still required before an actual fit runs:
-1. optional lens-light / sky-background model so lens galaxy light is not absorbed
-   into the source;
+1. ~~optional lens-light / sky-background model~~ — **done** (see above);
 2. an optimiser/sampler: `scipy.optimize` needs no new dependencies, while
    `lenstronomy.Workflow.fitting_sequence` + PSO/MCMC/nested sampling needs
    `tqdm` (a hard requirement today), `emcee` and `dynesty`;

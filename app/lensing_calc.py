@@ -39,10 +39,50 @@ class LensParams:
     e2: float = 0.0
     gamma: float = 2.0          # PEMD power-law index
 
+    # --- Deflector (lens galaxy) light -------------------------------------
+    # Light emitted by the lens galaxy itself. It sits in the image plane and is
+    # NOT lensed. Without it, real observations would have the deflector's light
+    # absorbed into the source during a fit.
+    light_model: str = "NONE"   # NONE | SERSIC_ELLIPSE | SERSIC | GAUSSIAN_ELLIPSE | GAUSSIAN
+    light_amp: float = 1.0
+    light_R_sersic: float = 0.8
+    light_n_sersic: float = 4.0
+    light_sigma: float = 0.5
+    light_e1: float = 0.0
+    light_e2: float = 0.0
+
+    def has_light(self) -> bool:
+        return self.light_model not in ("NONE", "", None)
+
+    def light_kwargs(self) -> dict:
+        """lenstronomy kwargs for this lens's light profile (image plane)."""
+        common = {
+            "amp": float(self.light_amp),
+            "center_x": float(self.center_x),
+            "center_y": float(self.center_y),
+        }
+        m = self.light_model
+        if m in ("SERSIC_ELLIPSE", "SERSIC"):
+            common["R_sersic"] = float(self.light_R_sersic)
+            common["n_sersic"] = float(self.light_n_sersic)
+            if m == "SERSIC_ELLIPSE":
+                common["e1"] = float(self.light_e1)
+                common["e2"] = float(self.light_e2)
+        elif m in ("GAUSSIAN_ELLIPSE", "GAUSSIAN"):
+            common["sigma"] = float(self.light_sigma)
+            if m == "GAUSSIAN_ELLIPSE":
+                common["e1"] = float(self.light_e1)
+                common["e2"] = float(self.light_e2)
+        return common
+
 
 # Extended-source light profiles and the kwargs each one needs. All of these are
 # resolved (extended) sources, not point sources.
 SOURCE_MODELS = ["SERSIC_ELLIPSE", "SERSIC", "GAUSSIAN_ELLIPSE", "GAUSSIAN"]
+
+# Deflector-galaxy light profiles (image plane, unlensed). "NONE" means the lens
+# galaxy emits no light in the model.
+LENS_LIGHT_MODELS = ["NONE", "SERSIC_ELLIPSE", "SERSIC", "GAUSSIAN_ELLIPSE", "GAUSSIAN"]
 
 
 @dataclass
@@ -119,6 +159,8 @@ class Config:
     # Convolution kernel applied to the model image. The default 1x1 kernel is a
     # delta function (no seeing); supply a real PSF to match observed data.
     psf_kernel: np.ndarray | None = None
+    # Constant sky background added to the model image.
+    sky_amp: float = 0.0
 
 
 @dataclass
@@ -289,6 +331,12 @@ def compute(config: Config, ref_source_index: int = -1) -> SimResult:
             except Exception:
                 image_positions.append((np.array([]), np.array([]), si))
 
+        # Add the deflector (lens galaxy) light: image plane, not lensed, added once.
+        image += _render_lens_light(config, num_pix, delta_pix)
+        # Constant sky background pedestal.
+        if config.sky_amp:
+            image += float(config.sky_amp)
+
         # 2D fields at the reference source redshift.
         lens_model, kwargs_lens = _get_lens_model(config.lenses, ref_z)
         if len(config.sources) > 0:
@@ -343,6 +391,58 @@ def _valid_source_model(model: str) -> str:
     return model if model in SOURCE_MODELS else "SERSIC_ELLIPSE"
 
 
+def _lens_light_components(config):
+    """Build (model_list, kwargs_list) for the deflector galaxy lights."""
+    model_list, kwargs_list = [], []
+    for lens in config.lenses:
+        if lens.has_light():
+            model_list.append(lens.light_model)
+            kwargs_list.append(lens.light_kwargs())
+    return model_list, kwargs_list
+
+
+def _render_lens_light(config, num_pix, delta_pix):
+    """Render the (unlensed) deflector light and sky background, PSF-convolved."""
+    model_list, kwargs_list = _lens_light_components(config)
+    if not model_list:
+        return np.zeros((num_pix, num_pix))
+
+    from lenstronomy.Data.imaging_data import ImageData
+    from lenstronomy.Data.psf import PSF
+    from lenstronomy.ImSim.image_model import ImageModel
+    from lenstronomy.LightModel.light_model import LightModel
+    from lenstronomy.Util import util
+
+    x_grid, y_grid = util.make_grid(num_pix, delta_pix)
+    data = ImageData(
+        ra_at_xy_0=x_grid[0], dec_at_xy_0=y_grid[0],
+        transform_pix2angle=np.array([[delta_pix, 0], [0, delta_pix]]),
+        image_data=np.zeros((num_pix, num_pix)),
+    )
+    psf = PSF(psf_type="PIXEL", pixel_size=delta_pix,
+              kernel_point_source=_normalised_kernel(config.psf_kernel))
+    image_model = ImageModel(
+        data_class=data, psf_class=psf,
+        lens_model_class=None, source_model_class=None,
+        lens_light_model_class=LightModel(light_model_list=model_list),
+    )
+    out = image_model.image(kwargs_lens=None, kwargs_source=None,
+                            kwargs_lens_light=kwargs_list)
+    return np.asarray(out, dtype=float)
+
+
+def _normalised_kernel(psf_kernel):
+    """Return a PSF kernel that integrates to 1 (identity fallback)."""
+    kernel = np.asarray(psf_kernel, dtype=float) if psf_kernel is not None \
+        else np.array([[1.0]])
+    if kernel.ndim != 2 or kernel.size == 0:
+        return np.array([[1.0]])
+    total = kernel.sum()
+    if total > 0:
+        return kernel / total
+    return np.array([[1.0]])
+
+
 def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix,
                          psf_kernel=None):
     from lenstronomy.Data.imaging_data import ImageData
@@ -367,16 +467,8 @@ def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix,
     # Convolve with the supplied PSF kernel; a 1x1 kernel means no blurring.
     # The kernel is normalised so it cannot rescale the image brightness: a PSF
     # must integrate to unity.
-    kernel = np.asarray(psf_kernel, dtype=float) if psf_kernel is not None \
-        else np.array([[1.0]])
-    if kernel.ndim != 2 or kernel.size == 0:
-        kernel = np.array([[1.0]])
-    total = kernel.sum()
-    if total > 0:
-        kernel = kernel / total
-    else:
-        kernel = np.array([[1.0]])
-    psf = PSF(psf_type="PIXEL", pixel_size=delta_pix, kernel_point_source=kernel)
+    psf = PSF(psf_type="PIXEL", pixel_size=delta_pix,
+              kernel_point_source=_normalised_kernel(psf_kernel))
     light_model = LightModel(light_model_list=[_valid_source_model(source.model)])
     kwargs_light = [source.profile_kwargs()]
     image_model = ImageModel(

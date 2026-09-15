@@ -313,6 +313,7 @@ class MainWindow(QMainWindow):
             num_pix=d["num_pix"],
             delta_pix=d["delta_pix"],
             psf_kernel=self.current_psf_kernel(),
+            sky_amp=d["sky_amp"],
         )
 
     def current_psf_kernel(self):
