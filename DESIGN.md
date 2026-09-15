@@ -12,7 +12,8 @@ interactive 3D scene.
   light-ray schematic, linked to the same parameters and updated live.
 - **Layout**: single window — parameter panel left; 2D image (matplotlib) and 3D
   scene (Vispy) on the right.
-- **Build order**: Phase 1 = 2D only (no new deps, quick to verify); Phase 2 = add 3D.
+- **Build order**: Phase 1 = 2D only (no new deps, quick to verify) — **done**;
+  Phase 2 = add 3D — **done**.
 
 ## Tech stack
 | Layer     | Choice                                        |
@@ -74,8 +75,16 @@ LensMovie/
 conda run -n lenstronomy_env python -m app.main
 ```
 
-## Phase 2 notes (Vispy)
-- Requires `conda install -n lenstronomy_env vispy` (and pyglet or similar backend).
-- Environment has DISPLAY=:1 and NVIDIA EGL/GL libs, so windowed/EGL should work.
-- Scene content: translucent lens-mass disk (density ~ r^-2 -> height/color) plus
-  light-ray paths bending through the lens.
+## Phase 2 (Vispy) — implemented
+- Installed `vispy` into `lenstronomy_env`. Environment has DISPLAY=:1 and
+  NVIDIA EGL/GL libs; the qt5 backend embeds as a real QWidget.
+- Scene content: translucent lens-mass plane (density ~ r^-2 -> height/color)
+  plus colored light-ray strips bending through the lens.
+- Implementation notes for vispy 0.14 (encountered during build):
+  * `SurfacePlot` + `colors` has an ordering bug (set_vertex_colors before
+    faces); build the surface as an explicit `scene.visuals.Mesh` instead.
+  * `Line` with per-vertex color arrays + `connect="segments"` trips
+    `_interpret_color`; use one `Line` per ray with a single colour and
+    `connect="strip"`.
+  * `Markers`, `Mesh(vertex_colors=...)`, and single-colour `Line` all work fine.
+- The 3D view is optional: `MainWindow` falls back to 2D-only if vispy fails.

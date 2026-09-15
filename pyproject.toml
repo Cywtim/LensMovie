@@ -16,11 +16,11 @@ dependencies = [
     "matplotlib",
     "PyQt5",
     "lenstronomy",
+    "vispy",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
-gui3d = ["vispy"]
 
 [project.scripts]
 lensmovie = "app.main:entry"
