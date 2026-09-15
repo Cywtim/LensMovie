@@ -58,3 +58,13 @@ def test_slider_change_emits_params(qapp):
     assert received, "expected a parametersChanged emission"
     assert abs(received[-1]["lens"]["theta_E"] - target) < 0.01
     panel.deleteLater()
+
+
+if __name__ == "__main__":
+    # Allow running this file directly (e.g. an IDE "Run" button on the file),
+    # which otherwise would neither find `app` nor actually run any test.
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    raise SystemExit(pytest.main([__file__, "-v"]))

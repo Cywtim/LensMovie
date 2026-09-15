@@ -42,3 +42,13 @@ def test_parameter_change_alters_image():
     img1 = sim2d.render(source=src1, num_pix=100, delta_pix=0.05)
     img2 = sim2d.render(source=src2, num_pix=100, delta_pix=0.05)
     assert not np.allclose(img1, img2)
+
+
+if __name__ == "__main__":
+    # Allow running this file directly (IDE "Run" button) — needs the project
+    # root on sys.path to import app.
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    raise SystemExit(pytest.main([__file__, "-v"]))
