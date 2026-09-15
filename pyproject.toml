@@ -25,6 +25,12 @@ dev = ["pytest>=7"]
 [project.scripts]
 lensmovie = "app.main:entry"
 
+[tool.pytest.ini_options]
+# Always add the project root to sys.path so `import app` works no matter where
+# pytest is invoked from (root, tests/, or elsewhere).
+pythonpath = ["."]
+testpaths = ["tests"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
