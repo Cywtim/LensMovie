@@ -21,12 +21,17 @@ class FitWorker(QThread):
 
     def __init__(self, config, data, lens_specs, lens_light_specs, source_specs,
                  n_particles=30, n_iterations=100, n_restarts=2,
-                 sigma_scale=4.0, polish=True, parent=None):
+                 sigma_scale=4.0, polish=True,
+                 preview_enabled=True, preview_interval=0.5, parent=None):
         super().__init__(parent)
         self._args = (config, data, lens_specs, lens_light_specs, source_specs)
+        # When previews are switched off, pass no callback at all so the fit loop
+        # does not touch the renderer.
+        self._preview_enabled = bool(preview_enabled)
         self._kwargs = dict(
             n_particles=n_particles, n_iterations=n_iterations,
             n_restarts=n_restarts, sigma_scale=sigma_scale, polish=polish,
+            preview_interval=float(preview_interval),
         )
         self._cancelled = False
 
@@ -43,7 +48,7 @@ class FitWorker(QThread):
             result = ft.run_pso(
                 *self._args,
                 progress=lambda msg: self.progressed.emit(msg),
-                preview=self._emit_preview,
+                preview=self._emit_preview if self._preview_enabled else None,
                 **self._kwargs,
             )
         except Exception as exc:                      # never kill the thread silently

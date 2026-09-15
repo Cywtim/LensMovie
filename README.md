@@ -33,7 +33,12 @@ Single-window layout:
   **best-fit model** or **residual**.
   **You can watch it converge**: while the swarm runs, the data panel draws the
   current best model live (`fitting… iter i/N`, with the running χ² in the fit
-  strip), so a long fit is not a black box.
+  strip), so a long fit is not a black box. Preview rendering is optional and
+  rate-limited — a **preview** checkbox plus an interval (default `0.5 s`).
+  Measured cost is negligible either way (a 200-iteration fit took 10.7 s with
+  previews off vs 10.0–10.3 s at every 0.1–2 s, i.e. within run-to-run noise), so
+  it can normally be left on; uncheck it on a slow machine for the guaranteed
+  minimum work.
 - **Fit-data layer** (inputs for the fit):
   - **pixel scale** (`arcsec/px`) is a control in the display strip and drives the
     model grid, so model and data can share one grid.

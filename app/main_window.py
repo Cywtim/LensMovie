@@ -395,8 +395,10 @@ class MainWindow(QMainWindow):
         self._fit_worker.previewed.connect(self._fit_preview)
         self._fit_worker.finished_ok.connect(self._fit_finished)
         self._fit_worker.failed.connect(self._fit_failed)
-        # Show the live model in the data panel while the fit runs.
-        self._ext_mode.setCurrentText("best-fit model")
+        # Show the live model in the data panel while the fit runs (only when
+        # previews are enabled).
+        if self.fit_bar.preview_enabled():
+            self._ext_mode.setCurrentText("best-fit model")
         self._fit_preview_count = 0
         self._fit_worker.start()
 

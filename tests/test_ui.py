@@ -691,3 +691,33 @@ def test_gui_shows_live_fit_previews(qapp):
     assert win._fit_result is not None
     win.close()
     win.deleteLater()
+
+
+def test_fit_bar_exposes_preview_settings(qapp):
+    """Preview rendering is optional and rate-limited from the UI."""
+    from app.controls import FitBar
+
+    bar = FitBar()
+    s = bar.settings()
+    assert s["preview_enabled"] is True
+    assert s["preview_interval"] > 0
+    # Unchecking must disable the interval box (it is meaningless without it).
+    bar._preview_chk.setChecked(False)
+    assert bar.preview_enabled() is False
+    assert bar._preview_interval.isEnabled() is False
+    bar._preview_chk.setChecked(True)
+    assert bar._preview_interval.isEnabled() is True
+    # The interval is settable within a sane range.
+    bar._preview_interval.setValue(2.5)
+    assert abs(bar.settings()["preview_interval"] - 2.5) < 1e-9
+    bar.deleteLater()
+
+
+def test_worker_disables_previews_when_unchecked():
+    from app.fit_worker import FitWorker
+
+    on = FitWorker(None, None, [], [], [], preview_enabled=True)
+    off = FitWorker(None, None, [], [], [], preview_enabled=False)
+    assert on._preview_enabled is True
+    assert off._preview_enabled is False
+    assert "preview_interval" in on._kwargs and "preview_interval" in off._kwargs

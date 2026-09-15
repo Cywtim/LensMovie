@@ -451,6 +451,27 @@ class FitBar(QWidget):
         self._iterations = spin(100, 10, 5000, "PSO iterations per restart")
         self._restarts = spin(2, 1, 20, "number of PSO restarts (best kept)")
 
+        # Live preview while fitting. Rendering the intermediate model costs time,
+        # so it is optional and rate-limited: a larger interval means fewer
+        # redraws and a faster fit; unchecking it removes the cost entirely.
+        self._preview_chk = QCheckBox("preview")
+        self._preview_chk.setChecked(True)
+        self._preview_chk.setToolTip(
+            "Draw the swarm's current model while fitting.\n"
+            "Uncheck to skip preview rendering entirely (fastest)."
+        )
+        self._preview_interval = QDoubleSpinBox()
+        self._preview_interval.setRange(0.05, 30.0)
+        self._preview_interval.setDecimals(2)
+        self._preview_interval.setSingleStep(0.25)
+        self._preview_interval.setValue(0.5)
+        self._preview_interval.setSuffix(" s")
+        self._preview_interval.setToolTip(
+            "Minimum time between preview redraws. Larger = fewer redraws and a "
+            "faster fit."
+        )
+        self._preview_chk.toggled.connect(self._preview_interval.setEnabled)
+
         lay.addWidget(self._fit_btn)
         lay.addWidget(self._cancel_btn)
         lay.addSpacing(8)
@@ -460,6 +481,9 @@ class FitBar(QWidget):
         lay.addWidget(self._iterations)
         lay.addWidget(QLabel("restarts:"))
         lay.addWidget(self._restarts)
+        lay.addSpacing(10)
+        lay.addWidget(self._preview_chk)
+        lay.addWidget(self._preview_interval)
         lay.addSpacing(12)
         self._status = QLabel("no fit run yet")
         self._status.setStyleSheet("color: gray;")
@@ -473,11 +497,16 @@ class FitBar(QWidget):
     def set_status(self, text: str):
         self._status.setText(text)
 
+    def preview_enabled(self) -> bool:
+        return self._preview_chk.isChecked()
+
     def settings(self) -> dict:
         return {
             "n_particles": self._particles.value(),
             "n_iterations": self._iterations.value(),
             "n_restarts": self._restarts.value(),
+            "preview_enabled": self._preview_chk.isChecked(),
+            "preview_interval": self._preview_interval.value(),
         }
 
 

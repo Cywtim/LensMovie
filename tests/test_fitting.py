@@ -276,3 +276,51 @@ def test_preview_failure_does_not_break_the_fit():
                      preview=boom, preview_interval=0.0)
     assert res.ok, res.error
     assert res.chi2_after < res.chi2_before
+
+
+@pytest.mark.slow
+def test_preview_interval_limits_the_number_of_renders():
+    """A larger interval must produce strictly fewer preview renders."""
+    truth = _truth_config()
+    data = _data_for(truth)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=0.85, gamma1=0.04, gamma2=-0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+    )
+    lens_s, ll_s, src_s = _specs(start, free_lens=("theta_E",))
+
+    def count(interval):
+        n = [0]
+        ft.run_pso(start, data, lens_s, ll_s, src_s,
+                   n_particles=25, n_iterations=80, n_restarts=1, polish=False,
+                   preview=lambda *a: n.__setitem__(0, n[0] + 1),
+                   preview_interval=interval)
+        return n[0]
+
+    dense = count(0.0)        # every iteration
+    sparse = count(1.0)       # at most ~1/s
+    assert dense > sparse, f"dense={dense} sparse={sparse}"
+    assert sparse >= 1        # still shows progress
+
+
+@pytest.mark.slow
+def test_previews_off_costs_nothing_and_skips_the_callback():
+    """With preview disabled the fit must not call the renderer at all."""
+    truth = _truth_config()
+    data = _data_for(truth)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=0.85, gamma1=0.04, gamma2=-0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+    )
+    lens_s, ll_s, src_s = _specs(start, free_lens=("theta_E",))
+    res = ft.run_pso(start, data, lens_s, ll_s, src_s,
+                     n_particles=20, n_iterations=50, n_restarts=1,
+                     preview=None)          # what the worker passes when unchecked
+    assert res.ok, res.error
+    assert res.chi2_after < res.chi2_before

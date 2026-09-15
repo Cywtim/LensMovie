@@ -182,6 +182,12 @@ Notes learned while building it:
   method does, then pushing the result back with ``FittingSequence.update_state``
   so the SIMPLEX polish continues from it. That is what makes the live preview
   possible without giving up lenstronomy's own optimiser.
+- Preview rendering is user-controllable: ``FitBar`` has a **preview** checkbox and
+  an interval spin box, forwarded as ``preview``/``preview_interval``. With it
+  unchecked the worker passes ``preview=None`` so the fit loop never touches the
+  renderer. Benchmarked on a 200-iteration fit: 10.7 s off vs 10.0 s at 0.1 s,
+  10.3 s at 0.5 s and 10.3 s at 2 s - the overhead is below run-to-run noise,
+  because a preview only fires a handful of times and uses the cheap render path.
 - Previews use ``lensing_calc.render_image`` (image only) rather than ``compute``,
   which also does the Fermat/time-delay fields, critical curve, caustic and image
   positions. Previews are throttled by *time* (0.35 s) so the extra rendering
