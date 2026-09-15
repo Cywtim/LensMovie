@@ -96,3 +96,64 @@ def test_canvases_expand_to_fill_cell(qapp):
         assert sp.verticalPolicy() in (QSizePolicy.Ignored, QSizePolicy.Expanding)
     win.close()
     win.deleteLater()
+
+
+def test_3d_toggle_exists_and_defaults_on(qapp):
+    from app.controls import DisplayBar
+
+    bar = DisplayBar()
+    assert bar.three_d_enabled() is True
+    bar._three_d.setChecked(False)
+    assert bar.three_d_enabled() is False
+    bar.deleteLater()
+
+
+def test_3d_toggle_hides_scene_and_skips_rebuild(qapp):
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    if win.scene3d is None:
+        pytest.skip("3D scene unavailable in this environment")
+
+    # On by default.
+    win.show()
+    qapp.processEvents()
+    assert win.display_bar.three_d_enabled() is True
+
+    # Turn off: the 3D bar is hidden and the render still succeeds.
+    win.display_bar._three_d.setChecked(False)
+    qapp.processEvents()
+    assert win._3d_wrap.isVisible() is False
+    win._rerender()
+    assert win._render_ok is True
+
+    # Turn back on.
+    win.display_bar._three_d.setChecked(True)
+    qapp.processEvents()
+    assert win._3d_wrap.isVisible() is True
+    win._rerender()
+    assert win._render_ok is True
+    win.close()
+    win.deleteLater()
+
+
+def test_3d_bar_spans_full_width_with_fixed_height(qapp):
+    """The 3D scene should stretch horizontally but keep its height."""
+    from PyQt5.QtWidgets import QSizePolicy
+
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    if win.scene3d is None:
+        pytest.skip("3D scene unavailable in this environment")
+    win.resize(1500, 1050)
+    win.show()
+    qapp.processEvents()
+
+    native = win.scene3d.native
+    assert native.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+    assert native.sizePolicy().verticalPolicy() == QSizePolicy.Fixed
+    assert native.width() > 0.9 * win.width()
+    assert native.height() == win._3d_height
+    win.close()
+    win.deleteLater()

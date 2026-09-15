@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from PyQt5.QtCore import pyqtSignal, Qt
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -297,10 +298,21 @@ class DisplayBar(QWidget):
         lay.addSpacing(12)
         lay.addWidget(QLabel("stretch:"))
         lay.addWidget(self._stretch)
+        lay.addSpacing(18)
+        # 3D toggle: turning it off hides the 3D scene and skips rebuilding it,
+        # which saves the per-update mesh construction / GL upload cost.
+        self._three_d = QCheckBox("3D scene")
+        self._three_d.setChecked(True)
+        self._three_d.setToolTip("Show the 3D scene (uncheck to save resources)")
+        self._three_d.toggled.connect(self._emit)
+        lay.addWidget(self._three_d)
         lay.addStretch(1)
 
     def _emit(self, *a):
         self.changed.emit()
+
+    def three_d_enabled(self) -> bool:
+        return self._three_d.isChecked()
 
     def display(self) -> dict:
         return {

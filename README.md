@@ -12,8 +12,11 @@ Single-window layout:
   (balanced so observer / lenses / source are evenly spaced); light rays bend in
   the sky plane at each lens. Sources are drawn as **extended blobs** sized by
   their profile radius. The default camera is a side-on view (drag to rotate,
-  scroll to zoom).
-- **Display strip**: grid size (numPix), colormap, log/linear stretch.
+  scroll to zoom). The bar spans the full window width with a fixed height.
+- **Display strip**: grid size (numPix), colormap, log/linear stretch, and a
+  **3D scene toggle**. Unchecking 3D hides the scene and skips rebuilding it
+  (mesh construction + GL upload), so an unused 3D view costs nothing — useful
+  on slower machines or when only the 2D views matter.
 - **Lower half — a 2-row x 3-column grid**:
   | | col 1 | col 2 | col 3 |
   |---|---|---|---|

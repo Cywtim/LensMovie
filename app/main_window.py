@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QMainWindow,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -45,15 +46,25 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
 
         # ----------------------------------------------------------------- top 3D bar
+        # Fixed height (so the vertical size is unchanged) but allowed to stretch
+        # across the full window width.
         self.scene3d = None
+        self._3d_height = 280
         self._3d_wrap = QWidget()
+        self._3d_wrap.setFixedHeight(self._3d_height)
         _3d_lay = QHBoxLayout(self._3d_wrap)
         _3d_lay.setContentsMargins(0, 0, 0, 0)
         try:
             from .scene3d import Scene3D
 
-            self.scene3d = Scene3D(size=(1500, 280))
-            _3d_lay.addWidget(self.scene3d.native)
+            self.scene3d = Scene3D(size=(1600, self._3d_height))
+            native = self.scene3d.native
+            # Expand horizontally to fill the bar, keep the height fixed.
+            native.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            native.setMinimumHeight(self._3d_height)
+            native.setMaximumHeight(self._3d_height)
+            native.setMinimumWidth(200)
+            _3d_lay.addWidget(native, 1)
         except Exception as exc:
             self.statusBar().showMessage(f"3D scene unavailable: {exc}")
             self._3d_wrap.hide()
@@ -104,10 +115,22 @@ class MainWindow(QMainWindow):
         self.lenses_panel.changed.connect(self._schedule)
         self.sources_panel.changed.connect(self._schedule)
         self.display_bar.changed.connect(self._schedule)
+        # Toggling 3D shows/hides the bar and re-renders.
+        self.display_bar._three_d.toggled.connect(self._on_3d_toggled)
 
         self._last_display = self.display_bar.display()
         self._render_ok = False
         self._rerender()
+
+    def _on_3d_toggled(self, enabled: bool):
+        # Hiding the widget also stops the GL canvas from painting, and the
+        # rebuild is skipped in _rerender, so an unused 3D view costs nothing.
+        self._3d_wrap.setVisible(bool(enabled))
+        if enabled:
+            self._schedule()
+        self.statusBar().showMessage(
+            "3D scene on" if enabled else "3D scene off (resources saved)", 2000
+        )
 
     def _schedule(self, *a):
         self._timer.start()
@@ -148,7 +171,9 @@ class MainWindow(QMainWindow):
             result.cc_ra, result.cc_dec, result.caustic_ra, result.caustic_dec,
         )
 
-        if self.scene3d is not None:
+        # The 3D scene is only rebuilt when it is actually visible: this is the
+        # expensive part (mesh construction + GL upload per update).
+        if self.scene3d is not None and self.display_bar.three_d_enabled():
             try:
                 self.scene3d.update_scene(config, result)
             except Exception as exc:
