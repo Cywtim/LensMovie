@@ -5,18 +5,26 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lensmovie"
 version = "0.1.0"
-description = "A Python CLI application for LensMovie."
+description = "Interactive Qt GUI to visualize gravitational lensing with lenstronomy (2D image plane + 3D scene)."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Cyan", email = "47052542+Cywtim@users.noreply.github.com" }]
-dependencies = []
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "PyQt5",
+    "lenstronomy",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+gui3d = ["vispy"]
 
 [project.scripts]
-lensmovie = "lensmovie.cli:main"
+lensmovie = "app.main:entry"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["app*"]

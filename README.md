@@ -1,48 +1,51 @@
 # LensMovie
 
-A Python CLI application.
+An interactive Qt application that visualizes **gravitational lensing** with
+[lenstronomy](https://lenstronomy.readthedocs.io/), re-rendered in real time as
+you adjust parameters with sliders.
+
+## Features (Phase 1 — 2D image plane)
+- Single-window layout: parameter panel (left) + rendered image (right).
+- Real-time slider control of:
+  - **Lens** (SIS + external shear): Einstein radius `theta_E`, shear `gamma1/2`, center.
+  - **Source** (Sersic ellipse): amplitude, size `R_sersic`, ellipticity `e1/e2`, position.
+  - **Display**: grid size, colormap, log/linear stretch.
+- Debounced throttled redraw keeps dragging smooth.
+- A 3D interactive scene (Vispy) is planned as Phase 2 — see `DESIGN.md`.
 
 ## Requirements
+The app is developed against a conda environment named `lenstronomy_env`:
 
-- Python 3.9+
+```
+python >=3.9
+numpy, scipy, matplotlib, PyQt5, lenstronomy
+```
 
-## Installation
-
+## Run
 ```bash
-pip install -e .
+conda run -n lenstronomy_env python -m app.main
+# or, after editable install:
+#   pip install -e .
+#   lensmovie
 ```
 
-To include development dependencies:
-
+## Tests
 ```bash
-pip install -e ".[dev]"
+conda run -n lenstronomy_env python -m pytest tests/ -q
 ```
+(UI smoke tests use the offscreen Qt platform, so they run without a display.)
 
-## Usage
-
-```bash
-lensmovie
-# Hello from LensMovie!
-
-lensmovie --version
-# lensmovie 0.1.0
+## Project layout
 ```
-
-## Development
-
-Run the tests:
-
-```bash
-pytest
-```
-
-## Project Structure
-
-```
-src/lensmovie/        # Application package
-tests/                # Test suite
+app/
+  main.py          # entry point
+  main_window.py   # main window, layout, signal wiring
+  controls.py      # parameter slider panel
+  plotting.py      # matplotlib canvas (2D image)
+  sim2d.py         # lenstronomy -> 2D image array
+tests/
+DESIGN.md
 ```
 
 ## License
-
 MIT
