@@ -485,8 +485,10 @@ class MainWindow(QMainWindow):
             result.time_delay, num_pix, delta,
             colormap=display["colormap"], stretch=display["stretch"],
         )
+        # Same field of view as the image so the two panels line up in x.
         self.curves_canvas.update_curves(
             result.cc_ra, result.cc_dec, result.caustic_ra, result.caustic_dec,
+            num_pix, delta,
         )
 
         # Keep an already-loaded external matrix in sync with the display

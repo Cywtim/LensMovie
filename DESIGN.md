@@ -52,6 +52,15 @@ interactive 3D scene.
 All four 2D canvases share one figure size and an Expanding size policy so the
 grid stays aligned and each canvas fills its cell on resize.
 
+Panel alignment inside the grid: every canvas places its main axes at the *same*
+fixed rectangle (``plotting._AXES_RECT``) and a colourbar goes in its own axes
+(``_CBAR_RECT``) outside it. ``tight_layout`` is deliberately not used, because it
+reflows the axes whenever a colourbar appears — which used to shrink the Lens
+image's axes to 0.571 of the figure while the Critical-curve panel sat at 0.758,
+misaligning the same sky coordinate by up to 112 px. The Critical-curve panel also
+now adopts the **model grid's field of view** instead of auto-scaling to its own
+curve extents (a 2.5x scale mismatch). Measured alignment is now 0.000 px.
+
 Top row notes:
 - The 3D scene has an Expanding (horizontal) / Fixed (vertical) size policy, so it
   widens with the window while the height stays at ``_3d_height`` (280).

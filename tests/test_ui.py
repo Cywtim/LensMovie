@@ -562,3 +562,74 @@ def test_gui_fit_closed_loop(qapp):
     assert r.chi2_after < r.chi2_before
     win.close()
     win.deleteLater()
+
+
+# ------------------------------------------------- panel x-axis alignment
+def test_image_and_curves_panels_share_the_same_x_axis(qapp):
+    """The Lens image and the Critical-curve panel sit in the same column, so a
+    given sky coordinate must land at the same canvas x in both.
+
+    Regression: the curves panel used to auto-scale to its own curve extents
+    (a much smaller window than the image's field of view) and the image panel's
+    colourbar stole axes width via tight_layout, so the two never lined up.
+    """
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.resize(1600, 1080)
+    win.show()
+    qapp.processEvents()
+    win._rerender()
+    qapp.processEvents()
+
+    ic, cc = win.image_canvas, win.curves_canvas
+    ic.figure.canvas.draw()
+    cc.figure.canvas.draw()
+
+    # Same field of view.
+    assert np.allclose(ic._ax.get_xlim(), cc._ax.get_xlim())
+    assert np.allclose(ic._ax.get_ylim(), cc._ax.get_ylim())
+    # Identical *requested* axes rectangle (before the square-aspect adjustment
+    # trims a hair when the two widgets differ by a pixel in height).
+    assert np.allclose(ic._ax.get_position(original=True).bounds,
+                       cc._ax.get_position(original=True).bounds, atol=1e-9)
+
+    # The same sky x maps to (very nearly) the same canvas x.
+    def canvas_x(canvas, sky):
+        return float(canvas._ax.transData.transform((sky, 0.0))[0])
+
+    for sky in (-3.7, -1.0, 0.0, 1.0, 3.7):
+        assert abs(canvas_x(ic, sky) - canvas_x(cc, sky)) < 1.0
+    win.close()
+    win.deleteLater()
+
+
+def test_all_panels_share_one_axes_rectangle(qapp):
+    """A colourbar must not change a panel's axes geometry."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    # A colourbar must not shift/shrink the main axes: the requested rectangle is
+    # the same for every canvas, whether or not it has one.
+    ref = win.image_canvas._ax.get_position(original=True).bounds
+    for c in (win.fermat_canvas, win.image_canvas,
+              win.delay_canvas, win.curves_canvas):
+        assert np.allclose(c._ax.get_position(original=True).bounds, ref, atol=1e-9)
+    win.close()
+    win.deleteLater()
+
+
+def test_curves_panel_uses_the_grid_field_of_view(qapp):
+    """update_curves must adopt the model grid's FOV, not the curve extents."""
+    from app.plotting import CurvesCanvas
+
+    cv = CurvesCanvas()
+    # a tiny critical curve inside a large field
+    theta = np.linspace(0, 2 * np.pi, 50)
+    r = 0.3
+    cv.update_curves(r * np.cos(theta), r * np.sin(theta),
+                     r * np.cos(theta), r * np.sin(theta),
+                     num_pix=100, delta_pix=0.05)
+    lo, hi = cv._ax.get_xlim()
+    assert np.isclose(lo, -2.475) and np.isclose(hi, 2.475)   # grid FOV, not ±0.3
+    cv.deleteLater()

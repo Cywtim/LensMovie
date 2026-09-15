@@ -35,22 +35,42 @@ _COLORMAPS = {
 # which is what keeps the grid aligned.
 _FIGSIZE = (3.0, 3.0)
 
+# Fixed, identical axes rectangle for every canvas. The colorbar gets its own
+# axes *outside* this rectangle instead of stealing space from the main axes, so
+# stacked panels (e.g. Lens image above Critical curve + caustic) line up exactly
+# in x even though only some of them have a colorbar.
+_AXES_RECT = [0.155, 0.145, 0.755, 0.775]
+_CBAR_RECT = [0.930, 0.145, 0.020, 0.775]
+
 
 class _MplCanvas(FigureCanvas):
     """Base matplotlib canvas that expands to fill its layout cell.
 
     Setting an Ignored/Expanding size policy and a tiny minimum size lets the
     canvas grow or shrink with the window instead of pinning the grid to the
-    figure's natural size.
+    figure's natural size. ``tight_layout`` is deliberately *not* used: it would
+    reflow the axes whenever a colorbar is present, breaking alignment between
+    canvases with and without one.
     """
 
     def __init__(self, parent=None):
-        self._figure = Figure(figsize=_FIGSIZE, tight_layout=True)
+        self._figure = Figure(figsize=_FIGSIZE)
         super().__init__(self._figure)
         self.setParent(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(80, 80)
-        self._ax = self._figure.add_subplot(111)
+        self._ax = self._figure.add_axes(_AXES_RECT)
+        self._cax = None
+
+    def _add_colorbar(self, mappable):
+        """Attach a colorbar in its own axes, leaving the main axes geometry
+        untouched so panels stay aligned."""
+        if self._cax is None:
+            self._cax = self._figure.add_axes(_CBAR_RECT)
+            self._cb = self._figure.colorbar(mappable, cax=self._cax)
+        else:
+            self._cb.update_normal(mappable)
+        return self._cb
 
     def _style_axes(self, title):
         self._ax.set_title(title, fontsize=9)
@@ -84,7 +104,7 @@ class FieldCanvas(_MplCanvas):
                 cmap=_COLORMAPS.get(colormap, cm.magma),
                 interpolation="nearest", vmin=-vmax if sym else None, vmax=vmax,
             )
-            self._cb = self._figure.colorbar(self._im, ax=self._ax, fraction=0.046, pad=0.04)
+            self._add_colorbar(self._im)
         else:
             vmax = np.abs(view).max() if sym else view.max()
             self._im.set_data(view)
@@ -126,7 +146,7 @@ class ImageCanvas(_MplCanvas):
             self._im = self._ax.imshow(view, origin="lower", extent=bounds,
                                        cmap=_COLORMAPS.get(colormap, cm.magma),
                                        interpolation="nearest")
-            self._cb = self._figure.colorbar(self._im, ax=self._ax, fraction=0.046, pad=0.04)
+            self._add_colorbar(self._im)
         else:
             self._im.set_data(view)
             self._im.set_extent(bounds)
@@ -164,21 +184,32 @@ class CurvesCanvas(_MplCanvas):
         (self._caustic,) = self._ax.plot([], [], lw=1.6, ls="--", color="red", label="caustic")
         self._ax.legend(loc="upper right", fontsize=7, framealpha=0.6)
 
-    def update_curves(self, cc_ra, cc_dec, caustic_ra, caustic_dec):
+    def update_curves(self, cc_ra, cc_dec, caustic_ra, caustic_dec,
+                      num_pix=None, delta_pix=None):
+        """Draw the curves using the *same* field of view as the image panel.
+
+        Matching limits (rather than auto-scaling to the curve extents) is what
+        makes this panel line up with the Lens image directly above it: the same
+        sky coordinate lands at the same place in both.
+        """
         self._set_curve(self._cc, cc_ra, cc_dec)
         self._set_curve(self._caustic, caustic_ra, caustic_dec)
 
-        # Equal aspect and stable limits around the sky region.
-        coords = [np.asarray(a, dtype=float) for a in (cc_ra, cc_dec, caustic_ra, caustic_dec)]
-        all_pts = np.concatenate([c for c in coords if c.size]) if any(c.size for c in coords) else None
-        if all_pts is not None and all_pts.size:
-            lo, hi = float(all_pts.min()), float(all_pts.max())
-            pad = max((hi - lo) * 0.2, 0.3)
-            self._ax.set_xlim(lo - pad, hi + pad)
-            self._ax.set_ylim(lo - pad, hi + pad)
+        if num_pix and delta_pix:
+            lo, hi = _extent(num_pix, delta_pix)[0], _extent(num_pix, delta_pix)[1]
         else:
-            self._ax.set_xlim(-2.5, 2.5)
-            self._ax.set_ylim(-2.5, 2.5)
+            # Fall back to the curve extents if no grid was supplied.
+            coords = [np.asarray(a, dtype=float)
+                      for a in (cc_ra, cc_dec, caustic_ra, caustic_dec)]
+            pts = np.concatenate([c for c in coords if c.size]) \
+                if any(c.size for c in coords) else None
+            if pts is not None and pts.size:
+                m = float(np.abs(pts).max()) * 1.2
+                lo, hi = -m, m
+            else:
+                lo, hi = -2.5, 2.5
+        self._ax.set_xlim(lo, hi)
+        self._ax.set_ylim(lo, hi)
         self._ax.set_aspect("equal", adjustable="box")
         self.draw_idle()
 
@@ -244,7 +275,7 @@ class ExternalCanvas(_MplCanvas):
             view, origin="lower",
             cmap=_COLORMAPS.get(colormap, cm.magma), interpolation="nearest",
         )
-        self._cb = self._figure.colorbar(self._im, ax=self._ax, fraction=0.046, pad=0.04)
+        self._add_colorbar(self._im)
         self._ax.set_aspect("equal", adjustable="box")
         self.draw_idle()
 
