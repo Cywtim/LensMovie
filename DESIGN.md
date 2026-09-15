@@ -99,6 +99,8 @@ LensMovie/
     plotting.py    # matplotlib canvases: Field/Image/Curves/External
     external_image.py # load user-supplied matrices (npy/fits/mat/text/images)
     fit_data.py    # resample data/noise/mask onto the model grid + chi2
+    fitting.py     # FittingSequence inputs + PSO run (locks -> kwargs_fixed)
+    fit_worker.py  # QThread wrapper for a non-blocking fit
     lensing_calc.py# lenstronomy physics: multi-plane sim, arrival time (Fermat), cc/caustic, image positions
     scene3d.py     # vispy -> edge-on 3D scene (top bar)
   pyproject.toml
@@ -148,9 +150,30 @@ Groundwork so a modelled lens image can be compared with a loaded image:
   ``fit_data.chi2`` evaluates a chi-squared over the usable pixels;
   ``fit_data.effective_psf_kernel`` returns the loaded kernel or one from the FWHM.
 
-Still required before an actual fit runs:
+## Fitting (implemented)
+``app/fitting.py`` builds lenstronomy's own ``FittingSequence`` inputs:
+``kwargs_data_joint`` (a one-band ``multi_band_list`` from ``FitData``),
+``kwargs_model`` (lens / lens-light / source lists + multi-plane redshifts) and
+``kwargs_params`` = ``[init, sigma, fixed, lower, upper]``. The **lock buttons map
+directly onto ``kwargs_fixed``**: only unlocked parameters are free; a parameter
+with no UI control is fixed too (otherwise it would become unbounded and free).
+
+Notes learned while building it:
+- ``SHEAR``'s fitting parameter names are ``gamma1, gamma2, ra_0, dec_0``; the
+  reference point must be supplied or ``LensParam`` raises ``KeyError: 'ra_0'``.
+- The fit must use the same ``SUPERSAMPLING_FACTOR`` as the renderer, or the model
+  cannot reproduce the data and the fit stalls above the noise floor.
+- PSO is stochastic, so ``run_pso`` restarts N times, polishes each with SIMPLEX,
+  and keeps the lowest chi-squared solution; ``sigma_scale=4`` gives the initial
+  swarm a wide enough spread to find the global solution reliably.
+- A fit of the deflector-light + extended-source model recovers injected
+  parameters exactly (theta_E 1.10 -> 1.100, source 0.08/-0.06 -> 0.080/-0.060,
+  chi2 -> the noise floor) and locked parameters are provably unchanged.
+
+Earlier items now resolved:
 1. ~~optional lens-light / sky-background model~~ — **done** (see above);
-2. an optimiser/sampler — **lenstronomy's own `FittingSequence` is the plan**:
+2. ~~an optimiser/sampler~~ — **done** with lenstronomy's own FittingSequence;
+   MCMC/nested posteriors would still need `emcee`/`dynesty`: — **lenstronomy's own `FittingSequence` is the plan**:
    installing `tqdm` (a one-line dependency) was the only blocker for
    `lenstronomy.Workflow.fitting_sequence`, and a real PSO fit now recovers
    parameters correctly in this env (verified: theta_E 1.10 -> 1.100, source
@@ -158,5 +181,5 @@ Still required before an actual fit runs:
    `'PSO'` and `'SIMPLEX'` out of the box (pure Python / scipy). Posterior
    sampling needs extra small packages: `emcee` (or `zeus`) for `'MCMC'`, and
    `dynesty`/`ultranest`/`pymultinest` for nested sampling + evidence;
-3. a fitting panel that varies only the *unlocked* parameters
-   (``fixed_params()``) and runs off the GUI thread.
+3. ~~a fitting panel varying only the unlocked parameters, off the GUI thread~~
+   — **done** (`FitBar` + `FitWorker`).

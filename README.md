@@ -24,7 +24,14 @@ Single-window layout:
   its first plane), `.mat`, `.txt` / `.csv` / `.dat` / `.tsv`, and image files
   `.png` / `.jpg` / `.tif` / `.bmp` (converted to luminance). The panel reports
   the loaded shape, value range and any conversion applied.
-- **Fit-data layer** (infrastructure for fitting the model to your image):
+- **Fit the model to your data** (lenstronomy's own `FittingSequence`, PSO):
+  a **Fit (PSO)** strip with particle / iteration / restart settings. The fit runs
+  on a **background thread** (the GUI stays responsive) and only the **unlocked 🔓**
+  parameters are varied — locked ones are held exactly. On completion the
+  best-fit values are written back into the sliders, the strip reports
+  `χ² initial → best (free, ndof)`, and the data panel can show
+  **best-fit model** or **residual**.
+- **Fit-data layer** (inputs for the fit):
   - **pixel scale** (`arcsec/px`) is a control in the display strip and drives the
     model grid, so model and data can share one grid.
   - **PSF**: a Gaussian `FWHM` control, or load a PSF **kernel** file.
@@ -104,6 +111,8 @@ app/
   scene3d.py       # vispy -> edge-on 3D scene
   external_image.py# load user-supplied matrices (npy/fits/mat/text/images)
   fit_data.py      # resample data/noise/mask onto the model grid + chi2
+  fitting.py       # build FittingSequence inputs, run PSO (locks -> kwargs_fixed)
+  fit_worker.py    # QThread wrapper so a fit does not block the GUI
 tests/
 DESIGN.md
 ```

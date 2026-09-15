@@ -194,6 +194,17 @@ class _EntryCard(QGroupBox):
         """Names of this entry's parameters that are currently fixed."""
         return {name for name, s in self.sliders.items() if s.is_fixed()}
 
+    def param_spec(self) -> dict:
+        """Return {name: (value, lower, upper, fixed)} for this entry.
+
+        Used by the fitting layer to build free/fixed parameter lists and bounds
+        without depending on Qt.
+        """
+        return {
+            name: (s.value(), s.vmin, s.vmax, s.is_fixed())
+            for name, s in self.sliders.items()
+        }
+
     def fix_param(self, name: str, fixed: bool = True, *, user: bool = False):
         """Fix (or, with ``user=True``, unfix) one of this entry's parameters."""
         if name in self.sliders:
@@ -218,9 +229,10 @@ class _EntryCard(QGroupBox):
 class _LensCard(_EntryCard):
     def __init__(self, lens: lc.LensParams | None = None, parent=None):
         lens = lens or lc.LensParams()
-        super().__init__("Lens", models=["SIS", "SIE", "PEMD"], parent=parent)
+        super().__init__("Lens", models=lc.available_lens_models(), parent=parent)
         self._lens = lens
-        self._model_combo.setCurrentText(lens.model if lens.model in ("SIS", "SIE", "PEMD") else "SIS")
+        self._model_combo.setCurrentText(
+            lens.model if lens.model in lc.available_lens_models() else "SIS")
         self._z_spin.setValue(lens.redshift)
         self.add_slider("theta_E", "theta_E", 0.2, 3.0, lens.theta_E, 2)
         self.add_slider("gamma1", "g1", -0.3, 0.3, lens.gamma1, 3)
@@ -363,6 +375,10 @@ class _CardListPanel(QScrollArea):
         """Per-entry set of fixed parameter names, in card order."""
         return [c.fixed_params() for c in self._cards]
 
+    def param_specs(self) -> list:
+        """Per-entry {name: (value, lower, upper, fixed)}, in card order."""
+        return [c.param_spec() for c in self._cards]
+
     def unfix_all(self, *, user: bool = False):
         """Unfix every parameter of every entry (user action required)."""
         for c in self._cards:
@@ -401,6 +417,68 @@ class SourcesPanel(_CardListPanel):
 
     def source_list(self):
         return [c.to_params() for c in self._cards]
+
+
+class FitBar(QWidget):
+    """Compact strip controlling the PSO fit against the loaded data."""
+
+    fitRequested = pyqtSignal()
+    cancelRequested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(4, 2, 4, 2)
+
+        self._fit_btn = QPushButton("Fit (PSO)")
+        self._fit_btn.setToolTip(
+            "Fit the model to the loaded data, varying only the unlocked (🔓) "
+            "parameters"
+        )
+        self._fit_btn.clicked.connect(self.fitRequested)
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setEnabled(False)
+        self._cancel_btn.clicked.connect(self.cancelRequested)
+
+        def spin(value, lo, hi, tip):
+            s = QSpinBox()
+            s.setRange(lo, hi)
+            s.setValue(value)
+            s.setToolTip(tip)
+            return s
+
+        self._particles = spin(30, 5, 500, "PSO particles per restart")
+        self._iterations = spin(100, 10, 5000, "PSO iterations per restart")
+        self._restarts = spin(2, 1, 20, "number of PSO restarts (best kept)")
+
+        lay.addWidget(self._fit_btn)
+        lay.addWidget(self._cancel_btn)
+        lay.addSpacing(8)
+        lay.addWidget(QLabel("particles:"))
+        lay.addWidget(self._particles)
+        lay.addWidget(QLabel("iterations:"))
+        lay.addWidget(self._iterations)
+        lay.addWidget(QLabel("restarts:"))
+        lay.addWidget(self._restarts)
+        lay.addSpacing(12)
+        self._status = QLabel("no fit run yet")
+        self._status.setStyleSheet("color: gray;")
+        lay.addWidget(self._status, 1)
+
+    # ------------------------------------------------------------------ state
+    def set_running(self, running: bool):
+        self._fit_btn.setEnabled(not running)
+        self._cancel_btn.setEnabled(running)
+
+    def set_status(self, text: str):
+        self._status.setText(text)
+
+    def settings(self) -> dict:
+        return {
+            "n_particles": self._particles.value(),
+            "n_iterations": self._iterations.value(),
+            "n_restarts": self._restarts.value(),
+        }
 
 
 class DisplayBar(QWidget):

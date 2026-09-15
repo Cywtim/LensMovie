@@ -24,6 +24,7 @@ import numpy as np
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -37,7 +38,8 @@ from PyQt5.QtWidgets import (
 )
 
 from . import lensing_calc as lc
-from .controls import DisplayBar, LensesPanel, SourcesPanel
+from .controls import DisplayBar, FitBar, LensesPanel, SourcesPanel
+from .fitting import FitError
 from .plotting import CurvesCanvas, ExternalCanvas, FieldCanvas, ImageCanvas
 
 
@@ -111,14 +113,19 @@ class MainWindow(QMainWindow):
             aux_row.addWidget(b, 1)
         ext_lay.addLayout(aux_row)
 
-        # Preview the data resampled onto the model grid, so alignment (pixel
-        # scale and centre) can be checked before any fitting.
-        self._on_grid_chk = QCheckBox("preview on model grid")
-        self._on_grid_chk.setToolTip(
-            "Resample the loaded data onto the model grid (numPix / pixel scale)"
-        )
-        self._on_grid_chk.toggled.connect(self._schedule)
-        ext_lay.addWidget(self._on_grid_chk)
+        # What the external panel shows: the raw data, the data resampled onto
+        # the model grid, or the fit's best-fit model / residual.
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("show:"))
+        self._ext_mode = QComboBox()
+        self._ext_mode.addItems(["data", "on model grid", "best-fit model", "residual"])
+        self._ext_mode.setToolTip(
+            "data = raw file; on model grid = resampled (checks alignment);\n"
+            "best-fit model / residual = available after a fit")
+        self._ext_mode.currentTextChanged.connect(self._schedule)
+        mode_row.addWidget(self._ext_mode, 1)
+        ext_lay.addLayout(mode_row)
+
         self._ext_label = QLabel("no file loaded")
         self._ext_label.setWordWrap(True)
         self._ext_label.setStyleSheet("color: gray; font-size: 10px;")
@@ -130,6 +137,12 @@ class MainWindow(QMainWindow):
         # ----------------------------------------------------------------- display bar
         self.display_bar = DisplayBar()
         root.addWidget(self.display_bar)
+
+        # Fitting strip.
+        self.fit_bar = FitBar()
+        self.fit_bar.fitRequested.connect(self._start_fit)
+        self.fit_bar.cancelRequested.connect(self._cancel_fit)
+        root.addWidget(self.fit_bar)
 
         # -------------------------------------------------------------- 2x3 grid
         grid = QGridLayout()
@@ -181,6 +194,9 @@ class MainWindow(QMainWindow):
         self._mask_array = None
         self._psf_kernel = None
         self._fit_data = None
+        self._fit_result = None
+        self._ext_desc = "no file loaded"
+        self._fit_worker = None
         self._center_offset = (0.0, 0.0)
         self._render_ok = False
         self._rerender()
@@ -225,6 +241,7 @@ class MainWindow(QMainWindow):
             return False
 
         self._external_array = array
+        self._ext_desc = desc
         display = self.display_bar.display()
         self.external_canvas.update_external(
             array,
@@ -238,6 +255,7 @@ class MainWindow(QMainWindow):
 
     def _clear_external_image(self):
         self._external_array = None
+        self._ext_desc = "no file loaded"
         self._fit_data = None
         self.external_canvas.show_message("no file loaded\n\nUse “Load image…” below")
         self._ext_label.setText("no file loaded")
@@ -302,6 +320,127 @@ class MainWindow(QMainWindow):
             return None
         return self._fit_data
 
+    def _update_external_view(self, result, display):
+        """Draw the external panel according to its mode selector."""
+        mode = self._ext_mode.currentText()
+        cmap, stretch = display["colormap"], display["stretch"]
+
+        if mode == "best-fit model" and self._fit_result is not None:
+            arr = self._fit_result.model
+            self.external_canvas.update_external(
+                arr, title="Best-fit model", colormap=cmap, stretch=stretch)
+            r = self._fit_result
+            self._ext_label.setText(
+                f"best fit: \u03c7\u00b2 {r.chi2_before:.4g} \u2192 {r.chi2_after:.4g}"
+                f"  ({r.n_free} free, ndof {r.ndof})")
+            return
+
+        if mode == "residual" and self._fit_result is not None:
+            model = self._fit_result.model
+            resid = np.asarray(self._external_array) - model \
+                if model.shape == np.asarray(self._external_array).shape \
+                else self._fit_result.residual
+            self.external_canvas.update_external(
+                resid, title="Residual (data \u2212 model)", colormap=cmap,
+                stretch="linear")
+            rms = float(np.sqrt(np.mean(np.asarray(resid) ** 2)))
+            self._ext_label.setText(f"residual rms = {rms:.4g}")
+            return
+
+        if mode == "on model grid":
+            fd = self.prepare_fit_data()
+            if fd is not None:
+                self.external_canvas.update_external(
+                    fd.image, title=f"On model grid {fd.num_pix}x{fd.num_pix}",
+                    colormap=cmap, stretch=stretch)
+                self._ext_label.setText(fd.summary())
+            return
+
+        self.external_canvas.update_external(
+            self._external_array,
+            title=f"External image {self._external_array.shape[0]}"
+                  f"x{self._external_array.shape[1]}",
+            colormap=cmap, stretch=stretch)
+        self._ext_label.setText(getattr(self, "_ext_desc", "no file loaded"))
+
+    # ------------------------------------------------------------ fitting
+    def _start_fit(self):
+        """Launch a PSO fit in a background thread."""
+        from .fit_worker import FitWorker
+
+        if self._fit_worker is not None and self._fit_worker.isRunning():
+            return
+
+        data = self.prepare_fit_data()
+        if data is None:
+            self.fit_bar.set_status("load an image first")
+            return
+        if data.noise is None:
+            self.fit_bar.set_status("load a noise map (chi-squared needs one)")
+            return
+
+        config = self._build_config()
+        settings = self.fit_bar.settings()
+        self.fit_bar.set_running(True)
+        self.fit_bar.set_status("fitting…")
+
+        # Lens light parameters live on the same cards as the lens itself.
+        lens_specs = self.lenses_panel.param_specs()
+        self._fit_worker = FitWorker(
+            config, data, lens_specs, lens_specs,
+            self.sources_panel.param_specs(), parent=self, **settings,
+        )
+        self._fit_worker.progressed.connect(self.fit_bar.set_status)
+        self._fit_worker.finished_ok.connect(self._fit_finished)
+        self._fit_worker.failed.connect(self._fit_failed)
+        self._fit_worker.start()
+
+    def _cancel_fit(self):
+        if self._fit_worker is not None:
+            self._fit_worker.cancel()
+            self.fit_bar.set_status("cancelling… (finishes the current restart)")
+
+    def _fit_failed(self, message: str):
+        self.fit_bar.set_running(False)
+        self.fit_bar.set_status(f"fit failed: {message}")
+        self.statusBar().showMessage(f"fit failed: {message}", 6000)
+
+    def _fit_finished(self, result):
+        self.fit_bar.set_running(False)
+        self._fit_result = result
+
+        # Write the best-fit values back into the sliders so the whole UI shows
+        # the fitted model (locked parameters are not touched: set_value is a
+        # no-op while a parameter is fixed).
+        self._apply_fitted_config(result.config)
+
+        self.fit_bar.set_status(
+            f"\u03c7\u00b2 {result.chi2_before:.4g} \u2192 {result.chi2_after:.4g}"
+            f"   ({result.n_free} free, ndof {result.ndof})"
+        )
+        self.statusBar().showMessage(
+            f"fit done: chi2 {result.chi2_before:.4g} -> {result.chi2_after:.4g}", 6000
+        )
+        self._ext_mode.setCurrentText("best-fit model")
+        self._rerender()
+
+    def _apply_fitted_config(self, config: lc.Config):
+        """Push fitted lens/source values back into the panel sliders."""
+        fields = ("theta_E", "gamma1", "gamma2", "e1", "e2", "gamma",
+                  "center_x", "center_y", "light_amp", "light_R_sersic",
+                  "light_n_sersic", "light_sigma", "light_e1", "light_e2")
+        for card, params in zip(self.lenses_panel._cards, config.lenses):
+            for name in fields:
+                row = card.sliders.get(name)
+                if row is not None:
+                    row.set_value(getattr(params, name, row.value()))
+        for card, params in zip(self.sources_panel._cards, config.sources):
+            for name in ("amp", "R_sersic", "sigma", "n_sersic", "e1", "e2",
+                         "center_x", "center_y"):
+                row = card.sliders.get(name)
+                if row is not None:
+                    row.set_value(getattr(params, name, row.value()))
+
     def _schedule(self, *a):
         self._timer.start()
 
@@ -350,27 +489,11 @@ class MainWindow(QMainWindow):
             result.cc_ra, result.cc_dec, result.caustic_ra, result.caustic_dec,
         )
 
-        # Keep an already-loaded external matrix in sync with the display settings.
-        # With "preview on model grid" checked, show the resampled data instead so
-        # the alignment (pixel scale / centre) can be verified before fitting.
+        # Keep an already-loaded external matrix in sync with the display
+        # settings, honouring the panel's mode selector.
         if self._external_array is not None:
             try:
-                if self._on_grid_chk.isChecked():
-                    fd = self.prepare_fit_data()
-                    if fd is not None:
-                        self.external_canvas.update_external(
-                            fd.image,
-                            title=f"On model grid {fd.num_pix}x{fd.num_pix}",
-                            colormap=display["colormap"], stretch=display["stretch"],
-                        )
-                        self._ext_label.setText(fd.summary())
-                else:
-                    self.external_canvas.update_external(
-                        self._external_array,
-                        title=f"External image {self._external_array.shape[0]}"
-                              f"x{self._external_array.shape[1]}",
-                        colormap=display["colormap"], stretch=display["stretch"],
-                    )
+                self._update_external_view(result, display)
             except Exception:
                 pass
 

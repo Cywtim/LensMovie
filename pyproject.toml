@@ -30,6 +30,9 @@ lensmovie = "app.main:entry"
 # pytest is invoked from (root, tests/, or elsewhere).
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "slow: tests that run a full PSO fit (deselect with -m 'not slow')",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

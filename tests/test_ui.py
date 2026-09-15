@@ -316,7 +316,7 @@ def test_prepare_fit_data_puts_external_image_on_model_grid(qapp):
     win.display_bar._delta_pix.setValue(0.05)
     win._external_array = np.random.RandomState(0).rand(200, 200)
     win._noise_array = np.full((200, 200), 0.05)
-    win._on_grid_chk.setChecked(True)
+    win._ext_mode.setCurrentText("on model grid")
     win._rerender()
 
     fd = win._fit_data
@@ -419,5 +419,146 @@ def test_sky_control_reaches_config(qapp):
     assert abs(win._build_config().sky_amp - 0.004) < 1e-9
     win._rerender()
     assert win._render_ok is True
+    win.close()
+    win.deleteLater()
+
+
+# ------------------------------------------------------------ fitting in the GUI
+def test_fit_bar_settings_and_running_state(qapp):
+    from app.controls import FitBar
+
+    bar = FitBar()
+    s = bar.settings()
+    assert {"n_particles", "n_iterations", "n_restarts"} <= set(s)
+    assert bar._fit_btn.isEnabled() is True
+    bar.set_running(True)
+    assert bar._fit_btn.isEnabled() is False
+    assert bar._cancel_btn.isEnabled() is True
+    bar.set_running(False)
+    assert bar._fit_btn.isEnabled() is True
+    bar.deleteLater()
+
+
+def test_fit_refuses_without_data(qapp):
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win._start_fit()          # no image loaded
+    assert "load an image" in win.fit_bar._status.text().lower()
+    win.close()
+    win.deleteLater()
+
+
+def test_fit_refuses_without_noise(qapp):
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win._external_array = np.random.RandomState(0).rand(60, 60)
+    win._start_fit()          # image but no noise map
+    assert "noise" in win.fit_bar._status.text().lower()
+    win.close()
+    win.deleteLater()
+
+
+def test_external_display_modes_without_fit(qapp):
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win._external_array = np.random.RandomState(0).rand(60, 60)
+    for mode in ("data", "on model grid", "best-fit model", "residual"):
+        win._ext_mode.setCurrentText(mode)
+        win._rerender()
+        assert win._render_ok is True     # missing fit must not crash the view
+    win.close()
+    win.deleteLater()
+
+
+def test_apply_fitted_config_writes_back_but_respects_locks(qapp):
+    """Fitted values reach the sliders; fixed ones are not overwritten."""
+    from app import lensing_calc as lc
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    card = win.lenses_panel._cards[0]
+    card.sliders["theta_E"].set_value(0.9)
+    card.sliders["gamma1"].set_value(0.01)
+    card.sliders["gamma1"].set_fixed(True)          # lock gamma1
+
+    fitted = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=1.42, gamma1=0.25,
+                              light_model="NONE")],
+        sources=win.sources_panel.source_list(),
+        num_pix=150, delta_pix=0.05,
+    )
+    win._apply_fitted_config(fitted)
+
+    # Sliders are quantised (1000 steps across their range), so allow one step.
+    assert abs(card.sliders["theta_E"].value() - 1.42) < 0.005   # free -> updated
+    assert abs(card.sliders["gamma1"].value() - 0.01) < 0.002    # locked -> kept
+    win.close()
+    win.deleteLater()
+
+
+@pytest.mark.slow
+def test_gui_fit_closed_loop(qapp):
+    """Full loop: load data, lock all but one parameter, fit, write back."""
+    from PyQt5.QtCore import QEventLoop, QTimer
+
+    from app import lensing_calc as lc
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    truth = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=1.10,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=[lc.SourceParams(amp=1.0, R_sersic=0.12, n_sersic=3.0,
+                                 e1=0.1, e2=-0.1, center_x=0.08, center_y=-0.06)],
+        num_pix=60, delta_pix=0.05,
+    )
+    mock = lc.compute(truth).image
+    sigma = 0.002
+    win._external_array = mock + np.random.RandomState(3).normal(0, sigma, mock.shape)
+    win._noise_array = np.full(mock.shape, sigma)
+
+    win.display_bar._numpix.setValue(60)
+    win.display_bar._delta_pix.setValue(0.05)
+    card = win.lenses_panel._cards[0]
+    card._light_combo.setCurrentText("SERSIC_ELLIPSE")
+    for name, val in (("light_amp", 0.6), ("light_R_sersic", 0.9),
+                      ("light_n_sersic", 4.0), ("light_e1", 0.15), ("light_e2", 0.05)):
+        card.sliders[name].set_value(val)
+    card.sliders["theta_E"].set_value(0.85)
+    scard = win.sources_panel._cards[0]
+    for name, val in (("amp", 1.0), ("R_sersic", 0.12), ("n_sersic", 3.0),
+                      ("e1", 0.1), ("e2", -0.1), ("center_x", 0.08), ("center_y", -0.06)):
+        scard.sliders[name].set_value(val)
+
+    for name, row in card.sliders.items():
+        if name != "theta_E":
+            row.set_fixed(True)
+    for row in scard.sliders.values():
+        row.set_fixed(True)
+
+    win.fit_bar._particles.setValue(25)
+    win.fit_bar._iterations.setValue(80)
+    win.fit_bar._restarts.setValue(2)
+
+    loop = QEventLoop()
+    win._start_fit()
+    win._fit_worker.finished_ok.connect(lambda *a: QTimer.singleShot(20, loop.quit))
+    win._fit_worker.failed.connect(lambda *a: QTimer.singleShot(20, loop.quit))
+    QTimer.singleShot(120000, loop.quit)
+    loop.exec_()
+    qapp.processEvents()
+
+    assert win._fit_result is not None, win.fit_bar._status.text()
+    r = win._fit_result
+    assert r.free_names == ["lens0.theta_E"]
+    assert abs(card.sliders["theta_E"].value() - 1.10) < 0.05
+    assert card.sliders["gamma1"].is_fixed() is True
+    assert abs(card.sliders["light_amp"].value() - 0.6) < 0.05
+    assert r.chi2_after < r.chi2_before
     win.close()
     win.deleteLater()

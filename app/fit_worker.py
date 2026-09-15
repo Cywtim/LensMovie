@@ -1,0 +1,50 @@
+"""Background worker so a PSO fit does not block the GUI.
+
+``run_pso`` is a pure function, so a small :class:`QThread` subclass is enough:
+``run`` calls it and emits the result (or an error) back on the GUI thread.
+"""
+
+from __future__ import annotations
+
+from PyQt5.QtCore import QThread, pyqtSignal
+
+from . import fitting as ft
+
+
+class FitWorker(QThread):
+    """Runs a PSO fit in a background thread."""
+
+    progressed = pyqtSignal(str)      # human-readable progress line
+    finished_ok = pyqtSignal(object)  # FitResult
+    failed = pyqtSignal(str)
+
+    def __init__(self, config, data, lens_specs, lens_light_specs, source_specs,
+                 n_particles=30, n_iterations=100, n_restarts=2,
+                 sigma_scale=4.0, polish=True, parent=None):
+        super().__init__(parent)
+        self._args = (config, data, lens_specs, lens_light_specs, source_specs)
+        self._kwargs = dict(
+            n_particles=n_particles, n_iterations=n_iterations,
+            n_restarts=n_restarts, sigma_scale=sigma_scale, polish=polish,
+        )
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            result = ft.run_pso(
+                *self._args,
+                progress=lambda msg: self.progressed.emit(msg),
+                **self._kwargs,
+            )
+        except Exception as exc:                      # never kill the thread silently
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+            return
+        if self._cancelled:
+            return
+        if not result.ok:
+            self.failed.emit(result.error or "fit failed")
+            return
+        self.finished_ok.emit(result)

@@ -78,6 +78,11 @@ class LensParams:
 
 # Extended-source light profiles and the kwargs each one needs. All of these are
 # resolved (extended) sources, not point sources.
+# Pixel integration accuracy used for every rendered model image. The fitter must
+# use the same value (fit_data/fitting pass it through) or the model cannot
+# reproduce the data and a fit will stall above the noise floor.
+SUPERSAMPLING_FACTOR = 3
+
 SOURCE_MODELS = ["SERSIC_ELLIPSE", "SERSIC", "GAUSSIAN_ELLIPSE", "GAUSSIAN"]
 
 # Deflector-galaxy light profiles (image plane, unlensed). "NONE" means the lens
@@ -192,6 +197,28 @@ _MODEL_PROFILE = {
     "SPEP": ("SPEP", ["theta_E", "gamma", "e1", "e2"]),
     "PEMD": ("PEMD", ["theta_E", "gamma", "e1", "e2"]),
 }
+
+
+def available_lens_models() -> list:
+    """Lens models that can actually be used in this environment.
+
+    ``PEMD`` needs the optional Fortran extension ``fastell4py``; it is only
+    offered when that import succeeds, so the UI never presents a model that is
+    guaranteed to fail.
+    """
+    models = ["SIS", "SIE"]
+    try:
+        from lenstronomy.LensModel.Profiles.pemd import PEMD  # noqa: F401
+
+        PEMD()
+        models.append("PEMD")
+    except Exception:
+        pass
+    return models
+
+
+# Every model this app knows about; the UI offers available_lens_models().
+LENS_MODELS = ["SIS", "SIE", "PEMD"]
 
 
 def lens_kwargs(lens: LensParams) -> dict:
@@ -425,6 +452,7 @@ def _render_lens_light(config, num_pix, delta_pix):
         data_class=data, psf_class=psf,
         lens_model_class=None, source_model_class=None,
         lens_light_model_class=LightModel(light_model_list=model_list),
+        kwargs_numerics={"supersampling_factor": SUPERSAMPLING_FACTOR},
     )
     out = image_model.image(kwargs_lens=None, kwargs_source=None,
                             kwargs_lens_light=kwargs_list)
@@ -476,7 +504,7 @@ def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix,
         psf_class=psf,
         lens_model_class=lens_model,
         source_model_class=light_model,
-        kwargs_numerics={"supersampling_factor": 3},
+        kwargs_numerics={"supersampling_factor": SUPERSAMPLING_FACTOR},
     )
     return np.asarray(image_model.image(kwargs_lens, kwargs_light), dtype=float)
 

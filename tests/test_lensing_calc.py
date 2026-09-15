@@ -178,3 +178,37 @@ def test_sky_background_pedestal():
     assert np.allclose(sky.image - base.image, 0.02, atol=1e-9)
     assert sky.image.min() > base.image.min()
     assert base.image.min() < 1e-3
+
+
+def test_available_lens_models_only_offers_working_models():
+    """Every advertised model must actually render (no broken UI options)."""
+    models = lc.available_lens_models()
+    assert "SIS" in models and "SIE" in models
+    for m in models:
+        res = lc.compute(lc.Config(lenses=[lc.LensParams(model=m)], num_pix=40))
+        assert res.ok, f"{m} advertised but failed: {res.error}"
+    # PEMD needs the optional fastell4py extension. The module imports either
+    # way, so availability must be probed by constructing the profile.
+    try:
+        from lenstronomy.LensModel.Profiles.pemd import PEMD
+
+        PEMD()
+        has_pemd = True
+    except Exception:
+        has_pemd = False
+    assert ("PEMD" in models) == has_pemd
+
+
+def test_lens_card_offers_only_available_models():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from app.controls import LensesPanel
+
+    panel = LensesPanel()
+    card = panel._cards[0]
+    offered = [card._model_combo.itemText(i) for i in range(card._model_combo.count())]
+    assert offered == lc.available_lens_models()
+    panel.deleteLater()
