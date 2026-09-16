@@ -55,6 +55,12 @@ _COLORBAR_STRIP = 26    # extra pixels on the right when a colourbar is present
 _COLORBAR_GAP = 8
 _COLORBAR_WIDTH = 14
 
+# The square sky field is drawn at 90% of the largest square that fits, so its
+# title, tick labels, axis labels and colourbar always keep a safe margin inside
+# the widget — no part of the plot crowds or clips at the cell edge in either
+# aspect (wide or tall cells).
+_SQUARE_SCALE = 0.9
+
 
 class _MplCanvas(FigureCanvas):
     """Base matplotlib canvas that expands to fill its layout cell.
@@ -67,9 +73,9 @@ class _MplCanvas(FigureCanvas):
 
     The sky field is a square in arcsec and is drawn with equal aspect, so a
     wide cell cannot be *stretched*; instead :meth:`_fit_axes_to_widget` sizes
-    the axes to the largest square that fits the cell and centres it, which
-    fills the shorter dimension edge-to-edge (no more dead margins) and keeps
-    the plotted square as large as physically possible.
+    the axes to ~90% of the largest square that fits the cell and centres it,
+    which keeps the plotted square as large as possible while leaving a safe
+    margin for the title, labels and colourbar in any cell aspect.
     """
 
     def __init__(self, parent=None):
@@ -89,18 +95,18 @@ class _MplCanvas(FigureCanvas):
         self._fit_axes_to_widget()
 
     def _fit_axes_to_widget(self):
-        """Place the main axes at the largest square that fits the widget.
+        """Place the main axes at ~90% of the largest square that fits.
 
-        The square is bounded by the *shorter* usable dimension (after the label
-        margins), so on a wide cell it is limited by the height and fills it
-        fully; the colourbar, when one exists, hugs its right edge.  The square
-        is centred in the usable area so gutters stay symmetric.
+        A 10% shrink (``_SQUARE_SCALE``) guarantees the title, tick labels, axis
+        labels and colourbar all keep a margin inside the widget however the
+        cell's aspect (x vs y) works out; the square is centred in the usable
+        area so the margin is symmetric.
 
         Alignment invariant: every canvas reserves the *same* right-side room
         (the colourbar strip is always accounted for, even by panels that draw
-        no colourbar) and uses the same margins, so stacked panels (Lens image
-        above Critical curve + caustic) get byte-identical axes geometry and a
-        given sky coordinate lands on the same canvas x in both.
+        no colourbar) and uses the same margins/scaling, so stacked panels (Lens
+        image above Critical curve + caustic) get byte-identical axes geometry
+        and a given sky coordinate lands on the same canvas x in both.
         """
         w, h = max(int(self.width()), 8), max(int(self.height()), 8)
         m = _MARGIN
@@ -112,7 +118,10 @@ class _MplCanvas(FigureCanvas):
 
         avail_w = w - left - right
         avail_h = h - top - bottom
-        side = max(min(avail_w, avail_h), 16)
+        # 90% of the largest fitting square: a universal breathing margin so
+        # title / labels / colourbar never reach the widget edge, in wide or
+        # tall cells alike.
+        side = max(min(avail_w, avail_h) * _SQUARE_SCALE, 16)
 
         cx = (left + (w - right)) / 2.0
         cy = (bottom + (h - top)) / 2.0

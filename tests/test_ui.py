@@ -721,13 +721,13 @@ def test_ticks_stay_inside_the_data_range(qapp):
 
 
 def test_axes_fill_the_widget_binding_dimension(qapp):
-    """The square sky field must fill the cell's binding (shorter) usable
-    dimension edge-to-edge and stay square on screen.
+    """The square sky field stays square on screen and leaves a safe ~10%
+    margin for title / labels / colourbar in every cell aspect.
 
-    Regression: the axes were a fixed fraction of the figure, so on a wide cell
-    the square left ~150 px of dead space.  The axes now adapt to the widget:
-    the square side equals ``min(usable width, usable height)`` — the binding
-    dimension — after the fixed plot margins and the reserved colourbar strip.
+    The axes adapt to the widget: the square side equals 90% of ``min(usable
+    width, usable height)`` — the binding dimension — after the fixed plot
+    margins and the reserved colourbar strip, so colourbar and labels never
+    reach the cell edge.
     """
     from app.main_window import MainWindow
 
@@ -747,14 +747,17 @@ def test_axes_fill_the_widget_binding_dimension(qapp):
         usable_h = max(c.height() - 52, 0)
         binding = min(usable_w, usable_h)
         bb = c._ax.get_window_extent()
-        # the square fills the binding dimension edge-to-edge...
-        assert abs(bb.width - binding) <= 4, \
-            f"{cname}: axes width {bb.width:.0f} vs binding {binding}px"
-        assert abs(bb.height - binding) <= 4, \
-            f"{cname}: axes height {bb.height:.0f} vs binding {binding}px"
-        # ...and is a square on screen (equal aspect, undistorted)
+        # the square is drawn at 90% of the binding dimension...
+        assert abs(bb.width - 0.9 * binding) <= 4, \
+            f"{cname}: axes width {bb.width:.0f} vs 0.9*binding {0.9*binding:.0f}px"
+        assert abs(bb.height - 0.9 * binding) <= 4, \
+            f"{cname}: axes height {bb.height:.0f} vs 0.9*binding {0.9*binding:.0f}px"
+        # ...is a square on screen (equal aspect, undistorted) ...
         assert abs(bb.width - bb.height) <= 2, \
             f"{cname}: axes not square ({bb.width:.0f}x{bb.height:.0f})"
+        # ... and stays well inside the widget with a balanced margin around it
+        assert bb.y0 > c.height() * 0.05 and c.height() - bb.y1 > c.height() * 0.05, \
+            f"{cname}: axes too close to the cell top/bottom edge"
     win.close()
     win.deleteLater()
 
