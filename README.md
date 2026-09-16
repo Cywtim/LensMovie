@@ -4,7 +4,7 @@ An interactive Qt application that visualizes **gravitational lensing** with
 [lenstronomy](https://lenstronomy.readthedocs.io/), re-rendered in real time as
 you adjust parameters with sliders.
 
-![LensMovie interface](img/V_0.5.png)
+![LensMovie interface](img/lensmovie_dark.png)
 
 ## Features
 Single-window layout:
@@ -14,7 +14,10 @@ Single-window layout:
   (balanced so observer / lenses / source are evenly spaced); light rays bend in
   the sky plane at each lens. Sources are drawn as **extended blobs** sized by
   their profile radius. The default camera is a side-on view (drag to rotate,
-  scroll to zoom). The bar spans the full window width with a fixed height.
+  scroll to zoom). Rays bend smoothly at each lens plane (Catmull-Rom, for
+  display) instead of kinking sharply. **Controls**: left-drag rotate,
+  right-drag / scroll zoom, **middle-drag** or **Shift+left-drag** pan. The bar
+  spans the full window width with a fixed height.
 - **Display row**: the display settings share one row with the external-image
   file buttons (**Load… / Clear / Noise… / Mask… / PSF…**), visually separated into
   their own labelled `data:` group so they read as two distinct groups. The row
@@ -23,9 +26,10 @@ Single-window layout:
   **3D scene toggle**. Unchecking 3D stops rendering the scene (only the black
   background area remains — the layout does not reflow) and skips rebuilding it,
   which saves the per-update mesh construction / GL upload cost.
-- **External image panel** (square, to the right of the 3D scene): load your own
-  lensed-image matrix with **Load image…** and it is drawn with the same
-  colormap/stretch. Supported inputs:
+- **External image panel** (tall strip at the right of the window, spanning the
+  3D bar / display row / fit strip): load your own lensed-image matrix with
+  **Load image…** and it is drawn with the same colormap/stretch. Supported
+  inputs:
   `.npy` / `.npz`, `.fits` / `.fit` / `.fts` (first image HDU; a cube reduces to
   its first plane), `.mat`, `.txt` / `.csv` / `.dat` / `.tsv`, and image files
   `.png` / `.jpg` / `.tif` / `.bmp` (converted to luminance). The panel reports
@@ -87,6 +91,10 @@ Single-window layout:
 - Debounced throttled redraw keeps slider dragging smooth.
 - All four 2D canvases share one figure size + Expanding size policy, so the grid
   stays aligned and each canvas fills its cell on resize.
+- **Resizable panes**: the columns of the 2D grid (two view panes vs the
+  configuration pane) and the row between the top block and the grid are
+  draggable ``QSplitter`` handles — give the sliders more room, or enlarge the
+  external panel, without touching any code.
 - If Vispy/OpenGL is unavailable, the app degrades gracefully to 2D-only.
 
 ## Requirements
@@ -122,8 +130,9 @@ scene needs a live OpenGL context and is covered by a smoke run with a display.)
 ```
 app/
   main.py          # entry point
-  main_window.py   # main window: top row (3D + external image), 2x3 grid
-  controls.py      # LensesPanel + SourcesPanel + DisplayBar + DataBar + FitBar
+  controller.py    # LensMovieController: program state + operations (UI↔program boundary)
+  main_window.py   # presenter: top area (3D + display row + external panel), resizable grid, widget↔controller binding
+  controls.py      # config panels (LensesPanel + SourcesPanel + DisplayBar + DataBar + FitBar)
   plotting.py      # matplotlib canvases (Field/Image/Curves/External)
   lensing_calc.py  # lenstronomy physics core (multi-plane, fields, cc/caustic)
   scene3d.py       # vispy -> edge-on 3D scene
@@ -131,10 +140,32 @@ app/
   fit_data.py      # resample data/noise/mask onto the model grid + chi2
   fitting.py       # build FittingSequence inputs, run PSO (locks -> kwargs_fixed)
   fit_worker.py    # QThread wrapper so a fit does not block the GUI
+  theme.py         # palette + QSS loader + matplotlib dark style (the app's "skin")
+  theme.qss        # the Qt stylesheet — restyle the whole app here
 img/               # screenshots and generated test data
 tests/
+tools/render_screenshot.py  # render the themed window to a PNG for visual checks
 DESIGN.md
 ```
+
+## UI and program are designed separately
+The app is split so the interface and the program can be updated independently:
+
+- **Program core** — `lensing_calc.py` (pure physics, no Qt): the stable
+  `Config → compute() → SimResult` contract; `fitting.py`, `fit_data.py`.
+- **Program state & operations** — `controller.LensMovieController`
+  (`controller.py`): owns the external/noise/mask/PSF data, the prepared fit
+  data and fit result, and runs the background fit. It knows **nothing about
+  widgets**; presenters read state through it and subscribe to its signals.
+- **UI / presenter** — `main_window.py` maps widgets ↔ controller and draws;
+  `controls.py` builds the panels; `plotting.py` / `scene3d.py` are pure views.
+- **Skin** — `theme.qss` + `theme.PALETTE` (theme.py) are the *single* place
+  colours/fonts live. Restyling is a one-file change; the physics core never
+  imports the theme.
+
+So you can restyle the interface without touching the program, and improve the
+physics without touching a single widget — as long as `Config` / `SimResult`
+and the controller API stay stable.
 
 ## License
 MIT

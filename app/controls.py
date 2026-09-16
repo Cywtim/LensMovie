@@ -393,6 +393,7 @@ class _CardListPanel(QScrollArea):
         self.setWidget(body)
 
         self._title = QLabel(f"<b>{title}</b>")
+        self._title.setObjectName("panelTitle")
         self._root.addWidget(self._title)
         self._root.addStretch(1)
 
@@ -571,7 +572,7 @@ class FitBar(QWidget):
         lay.addWidget(self._preview_interval)
         lay.addSpacing(12)
         self._status = QLabel("no fit run yet")
-        self._status.setStyleSheet("color: gray;")
+        self._status.setObjectName("fitStatus")
         lay.addWidget(self._status, 1)
 
     # ------------------------------------------------------------------ state

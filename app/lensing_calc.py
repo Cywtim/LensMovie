@@ -532,12 +532,25 @@ def _solve_images(lens_model, kwargs_lens, source, color_idx=0):
     return np.asarray(x), np.asarray(y), color_idx
 
 
-def _critical_curve(lens_model, kwargs_lens, window=2.5):
+def _critical_curve(lens_model, kwargs_lens, window=None):
     from lenstronomy.LensModel.lens_model_extensions import LensModelExtensions
+
+    if window is None:
+        # Adapt the trace window to the lens scale.  A fixed ±2.5 window clips a
+        # larger-θ_E critical curve into an arc that pokes out of the panel (or
+        # vanishes entirely); enclosing the lens centre + ~2.5×θ_E of margin keeps
+        # the whole curve.  The search-grid spacing scales with the window so the
+        # compute cost stays roughly constant.
+        centers = [np.hypot(float(kw.get("center_x", 0.0)),
+                            float(kw.get("center_y", 0.0))) for kw in kwargs_lens]
+        thetas = [abs(float(kw.get("theta_E", 0.0))) for kw in kwargs_lens]
+        extent = max(centers, default=0.0) + 2.5 * max(thetas, default=0.0)
+        window = max(2.5, min(extent + 1.0, 200.0))
+    grid_scale = window / 250.0
 
     ext = LensModelExtensions(lens_model)
     ra_c, dec_c, ra_ca, dec_ca = ext.critical_curve_caustics(
-        kwargs_lens=kwargs_lens, compute_window=window
+        kwargs_lens=kwargs_lens, compute_window=window, grid_scale=grid_scale
     )
     # Handle both single arrays, tuples of branches, and empty results.
     def flat(x):

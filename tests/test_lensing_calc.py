@@ -212,3 +212,29 @@ def test_lens_card_offers_only_available_models():
     offered = [card._model_combo.itemText(i) for i in range(card._model_combo.count())]
     assert offered == lc.available_lens_models()
     panel.deleteLater()
+
+
+def test_large_theta_E_critical_curve_is_found_in_full():
+    """The critical-curve trace window adapts to θ_E: a big Einstein ring is
+    returned whole instead of being clipped (or vanishing) at a fixed window.
+
+    Regression: ``_critical_curve`` used a fixed compute_window=2.5, so for
+    θ_E ≳ 2.5 the ring lay outside the trace window and came back as a partial
+    arc / empty, making the critical curve poke out of the panel.
+    """
+    import numpy as np
+
+    from app import lensing_calc as lc
+
+    for te in (3.0, 6.0, 10.0):
+        cfg = lc.Config(
+            lenses=[lc.LensParams(theta_E=te)],
+            sources=[lc.SourceParams(center_x=0.0, center_y=0.0)],
+        )
+        res = lc.compute(cfg)
+        assert res.ok, res.error
+        assert res.cc_ra.size, f"critical curve empty at theta_E={te}"
+        r = max(float(np.abs(res.cc_ra).max()), float(np.abs(res.cc_dec).max()))
+        # an on-axis SIS critical curve is a circle of radius θ_E
+        assert np.isclose(r, te, rtol=0.25), \
+            f"ring radius {r:.2f} != θ_E={te}"

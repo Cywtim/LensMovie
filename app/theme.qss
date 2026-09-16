@@ -1,0 +1,263 @@
+/* ========================================================================
+   LensMovie — dark scientific theme
+   ------------------------------------------------------------------------
+   This file is the single "skin" of the application.  Palette placeholders
+   (an at-sign wrapping a palette key, e.g. the window-background key) are
+   injected from app/theme.py (PALETTE) at load time, so the palette has
+   exactly one source of truth.  To restyle the whole GUI you edit this file
+   (and/or the PALETTE dict in theme.py) — no program code needs to change.
+   The physics core (app/lensing_calc.py) never touches this.
+   ======================================================================== */
+
+QMainWindow {
+    background-color: @app_bg@;
+    color: @text@;
+}
+
+/* Transparent by default so containers show the window background; concrete
+   panels (group boxes, inputs) paint their own surface below. */
+QWidget {
+    background-color: transparent;
+    color: @text@;
+    font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ panels */
+QGroupBox {
+    background-color: @panel@;
+    border: 1px solid @border@;
+    border-radius: 7px;
+    margin-top: 1.3em;
+    padding: 8px 8px 8px 8px;
+    color: @text@;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    top: 2px;
+    padding: 0 5px;
+    color: @accent_text@;
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- buttons */
+QPushButton {
+    background-color: @card@;
+    color: @text@;
+    border: 1px solid @border_hi@;
+    border-radius: 5px;
+    padding: 4px 10px;
+}
+QPushButton:hover {
+    background-color: #2c3a4c;
+    border: 1px solid @accent@;
+}
+QPushButton:pressed {
+    background-color: #1f2a37;
+}
+QPushButton:checked {
+    background-color: @accent_dim@;
+    border: 1px solid @accent@;
+    color: @accent_text@;
+}
+QPushButton:disabled {
+    color: @text_faint@;
+    background-color: @panel@;
+    border: 1px solid @border@;
+}
+
+/* -------------------------------------------------- inputs: combo + spins */
+QComboBox, QSpinBox, QDoubleSpinBox {
+    background-color: @input@;
+    color: @text@;
+    border: 1px solid @border@;
+    border-radius: 4px;
+    padding: 2px 6px;
+    selection-background-color: @selection@;
+    selection-color: #eaf6ff;
+}
+QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {
+    border: 1px solid @accent@;
+}
+QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+    border: 1px solid @accent@;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 18px;
+}
+QComboBox QAbstractItemView {
+    background-color: @input@;
+    color: @text@;
+    border: 1px solid @border_hi@;
+    selection-background-color: @selection@;
+    selection-color: #eaf6ff;
+    outline: none;
+}
+QSpinBox::up-button, QSpinBox::down-button,
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+    border: none;
+    background: transparent;
+    width: 16px;
+}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+    background-color: @card@;
+}
+
+/* ----------------------------------------------------------------- sliders */
+QSlider::groove:horizontal {
+    height: 6px;
+    background: @input@;
+    border: 1px solid @border@;
+    border-radius: 3px;
+}
+QSlider::sub-page:horizontal {
+    background: @slider_fill@;
+    border-radius: 3px;
+}
+QSlider::handle:horizontal {
+    background: @slider_thumb@;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+    border: 1px solid @accent@;
+}
+QSlider::handle:horizontal:hover {
+    background: #bce7ff;
+}
+QSlider:disabled::groove:horizontal {
+    background: @panel@;
+    border: 1px solid @border@;
+}
+QSlider:disabled::sub-page:horizontal {
+    background: #2a333d;
+}
+QSlider:disabled::handle:horizontal {
+    background: @text_faint@;
+    border: 1px solid @border@;
+}
+
+/* --------------------------------------------------------------- checkboxes */
+QCheckBox {
+    spacing: 6px;
+    color: @text@;
+}
+QCheckBox::indicator {
+    width: 15px;
+    height: 15px;
+    border-radius: 3px;
+    border: 1px solid @border_hi@;
+    background: @input@;
+}
+QCheckBox::indicator:hover {
+    border: 1px solid @accent@;
+}
+QCheckBox::indicator:checked {
+    background: @accent_dim@;
+    border: 1px solid @accent@;
+}
+QCheckBox:disabled {
+    color: @text_faint@;
+}
+
+/* ------------------------------------------------------------- scroll areas */
+QScrollArea {
+    border: none;
+    background: transparent;
+}
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 12px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: @border_hi@;
+    border-radius: 5px;
+    min-height: 24px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #4a5a6e;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: 12px;
+}
+QScrollBar::handle:horizontal {
+    background: @border_hi@;
+    border-radius: 5px;
+    min-width: 24px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #4a5a6e;
+}
+QScrollBar::add-line, QScrollBar::sub-line {
+    width: 0;
+    height: 0;
+}
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+}
+
+/* ------------------------------------------------------------ splitters (draggable panes) */
+QSplitter::handle {
+    background: @panel@;
+    border: 1px solid @border@;
+}
+QSplitter::handle:horizontal {
+    width: 5px;
+}
+QSplitter::handle:vertical {
+    height: 5px;
+}
+QSplitter::handle:hover {
+    background: @accent_dim@;
+    border: 1px solid @accent@;
+}
+QSplitter::handle:pressed {
+    background: @accent@;
+}
+
+/* ---------------------------------------------------------- status + chrome */
+QStatusBar {
+    background: @input@;
+    color: @text_dim@;
+}
+QStatusBar::item {
+    border: none;
+}
+QToolTip {
+    background-color: @tooltip_bg@;
+    color: #eaf0f6;
+    border: 1px solid @border_hi@;
+    padding: 4px 6px;
+}
+
+/* Named widgets ----------------------------------------------------------
+   Small, purpose-built labels/separators pick their colour here instead of
+   inline styleSheet calls, so all styling stays in this one file. */
+QLabel#fitStatus {
+    color: @accent_text@;
+    font-weight: 500;
+}
+QLabel#extStatus {
+    color: @text_dim@;
+}
+QLabel#panelTitle {
+    color: @accent_text@;
+    font-size: 13px;
+}
+QLabel#dataLabel {
+    color: @accent_text@;
+}
+QFrame#vsep {
+    color: @border_hi@;
+    background-color: @border_hi@;
+}

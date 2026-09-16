@@ -142,8 +142,9 @@ def test_3d_toggle_keeps_black_background_and_skips_rebuild(qapp):
     win.deleteLater()
 
 
-def test_3d_shares_top_row_with_square_external_panel(qapp):
-    """Top row = stretchable 3D (fixed height) + a fixed square external panel."""
+def test_3d_bar_and_external_panel_layout(qapp):
+    """Top area: stretchable 3D bar (fixed height) + an external panel that
+    spans BOTH the 3D row and the numPix/display row below it."""
     from PyQt5.QtWidgets import QSizePolicy
 
     from app.main_window import MainWindow
@@ -160,14 +161,15 @@ def test_3d_shares_top_row_with_square_external_panel(qapp):
     assert native.sizePolicy().verticalPolicy() == QSizePolicy.Fixed
     assert native.height() == win._3d_height
 
-    # The external panel is square and sits at the right of the same row.
-    assert win.ext_panel.width() == win.ext_panel.height() == win._3d_height
-    # Both are in the top row: compare positions of sibling widgets (the 3D
-    # native lives inside its wrapper, so use the wrapper).
+    # The external panel sits to the right of the 3D area, top-aligned...
     assert win.ext_panel.x() > win._3d_wrap.x()
-    assert win.ext_panel.y() == win._3d_wrap.y()
-    assert win.ext_panel.height() == win._3d_wrap.height()
-    # The 3D takes the remaining width (window minus the square panel).
+    assert abs(win.ext_panel.y() - win._3d_wrap.y()) < 2
+    # ...and spans at least the 3D row AND the display row: it is taller than
+    # the 3D bar alone and runs down past the display row's bottom edge.
+    assert win.ext_panel.height() > win._3d_wrap.height()
+    assert win.ext_panel.geometry().bottom() \
+        >= win.display_row.geometry().bottom() - 2
+    # The 3D takes the remaining width (window minus the panel).
     assert native.width() > 0.6 * win.width()
     assert win.external_canvas is not None
     win.close()
@@ -564,14 +566,12 @@ def test_gui_fit_closed_loop(qapp):
     win.deleteLater()
 
 
-# ------------------------------------------------- panel x-axis alignment
-def test_image_and_curves_panels_share_the_same_x_axis(qapp):
-    """The Lens image and the Critical-curve panel sit in the same column, so a
-    given sky coordinate must land at the same canvas x in both.
-
-    Regression: the curves panel used to auto-scale to its own curve extents
-    (a much smaller window than the image's field of view) and the image panel's
-    colourbar stole axes width via tight_layout, so the two never lined up.
+# --------------------------------------------------- independent fields of view
+def test_image_and_curves_fields_of_view_are_independent(qapp):
+    """The Lens image and the Critical-curve panel use different fields of view
+    by design: the image keeps the model-grid FOV, while the curves panel
+    auto-scales to the curves so a critical curve outside the grid is never
+    clipped at the panel edge.
     """
     from app.main_window import MainWindow
 
@@ -586,20 +586,60 @@ def test_image_and_curves_panels_share_the_same_x_axis(qapp):
     ic.figure.canvas.draw()
     cc.figure.canvas.draw()
 
-    # Same field of view.
-    assert np.allclose(ic._ax.get_xlim(), cc._ax.get_xlim())
-    assert np.allclose(ic._ax.get_ylim(), cc._ax.get_ylim())
-    # Identical *requested* axes rectangle (before the square-aspect adjustment
-    # trims a hair when the two widgets differ by a pixel in height).
-    assert np.allclose(ic._ax.get_position(original=True).bounds,
-                       cc._ax.get_position(original=True).bounds, atol=1e-9)
+    # The lens image keeps the model grid's FOV (default 150 px @ 0.05″ → ±3.725).
+    assert np.allclose(ic._ax.get_xlim(), (-3.725, 3.725))
+    assert np.allclose(ic._ax.get_ylim(), (-3.725, 3.725))
 
-    # The same sky x maps to (very nearly) the same canvas x.
-    def canvas_x(canvas, sky):
-        return float(canvas._ax.transData.transform((sky, 0.0))[0])
+    # A ring far outside that FOV must be fully visible on the curves panel.
+    theta = np.linspace(0, 2 * np.pi, 60)
+    r = 9.0
+    cc.update_curves(r * np.cos(theta), r * np.sin(theta),
+                     r * np.cos(theta), r * np.sin(theta),
+                     num_pix=150, delta_pix=0.05)
+    lo, hi = cc._ax.get_xlim()
+    assert lo <= -9.0 * 1.1 - 1e-9, "curve clipped at the panel edge (left)"
+    assert hi >= 9.0 * 1.1 + 1e-9, "curve clipped at the panel edge (right)"
+    win.close()
+    win.deleteLater()
 
-    for sky in (-3.7, -1.0, 0.0, 1.0, 3.7):
-        assert abs(canvas_x(ic, sky) - canvas_x(cc, sky)) < 1.0
+
+def test_column_and_row_splitters_resize_the_panes(qapp):
+    """The 2D grid columns and the grid-vs-top row are draggable splitters."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.resize(1500, 1050)
+    win.show()
+    qapp.processEvents()
+
+    # Columns: three panes (Fermat/delay | image/curves | lenses/sources).
+    s = win.col_split.sizes()
+    assert len(s) == 3 and all(w > 150 for w in s)
+    assert abs(s[0] - s[1]) <= 2  # the two view columns start (near-)equal
+    # Drag: give the config pane far more width.
+    total = sum(s)
+    cols = [int(total * 0.16), int(total * 0.16), total - 2 * int(total * 0.16)]
+    win.col_split.setSizes(cols)
+    qapp.processEvents()
+    after = win.col_split.sizes()
+    assert after[2] > s[2] + 100, "column splitter did not resize the panes"
+
+    # Rows: top block (3D + display + fit) vs the 2D grid.
+    r = win.row_split.sizes()
+    assert len(r) == 2
+    top, grid = r
+    # Enlarge the top area (taller external panel); the grid must give way.
+    taller = [top + int(grid / 2), grid - int(grid / 2)]
+    win.row_split.setSizes(taller)
+    qapp.processEvents()
+    after_r = win.row_split.sizes()
+    assert after_r[0] > r[0] + 50, "row splitter did not resize the panes"
+    assert abs(after_r[0] + after_r[1] - (r[0] + r[1])) <= 2
+
+    # The canvases still keep the same axes frame after the drag (no reflow).
+    im = win.image_canvas._ax.get_position(original=True).bounds
+    cv = win.curves_canvas._ax.get_position(original=True).bounds
+    assert np.allclose(im, cv, atol=5e-3)
     win.close()
     win.deleteLater()
 
@@ -619,20 +659,104 @@ def test_all_panels_share_one_axes_rectangle(qapp):
     win.deleteLater()
 
 
-def test_curves_panel_uses_the_grid_field_of_view(qapp):
-    """update_curves must adopt the model grid's FOV, not the curve extents."""
+def test_curves_panel_shows_large_curves_in_full(qapp):
+    """update_curves must show the whole critical curve / caustic even when it
+    is much bigger than the model grid FOV (it auto-scales to the curves)."""
     from app.plotting import CurvesCanvas
 
     cv = CurvesCanvas()
-    # a tiny critical curve inside a large field
+    theta = np.linspace(0, 2 * np.pi, 50)
+    r = 6.0                                     # grid FOV would be ±2.475
+    cv.update_curves(r * np.cos(theta), r * np.sin(theta),
+                     r * np.cos(theta), r * np.sin(theta),
+                     num_pix=100, delta_pix=0.05)
+    lo, hi = cv._ax.get_xlim()
+    assert not np.isclose(lo, -2.475), "still pinned to the grid FOV"
+    assert lo <= -6.0 * 1.05 and hi >= 6.0 * 1.05, "large curve clipped"
+    cv.deleteLater()
+
+
+def test_curves_panel_zooms_to_small_curves(qapp):
+    """A small critical curve must zoom in on itself, not show a huge FOV."""
+    from app.plotting import CurvesCanvas
+
+    cv = CurvesCanvas()
     theta = np.linspace(0, 2 * np.pi, 50)
     r = 0.3
     cv.update_curves(r * np.cos(theta), r * np.sin(theta),
                      r * np.cos(theta), r * np.sin(theta),
                      num_pix=100, delta_pix=0.05)
     lo, hi = cv._ax.get_xlim()
-    assert np.isclose(lo, -2.475) and np.isclose(hi, 2.475)   # grid FOV, not ±0.3
+    assert abs(hi) < 2.0, "small curve should be zoomed in, not at ±2.475"
     cv.deleteLater()
+
+
+# ------------------------------------------------------- adaptive fill + ticks
+def test_ticks_stay_inside_the_data_range(qapp):
+    """Tick marks must adapt to each panel's arcsec range, not spill past it.
+
+    Regression: the default locator rounded the +/-3.725 field up to +/-4.5, so
+    ticks floated outside the visible image.  With ``prune="both"`` every tick
+    must fall within (or on) the panel's own data limits.
+    """
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.resize(1500, 1050)
+    win.show()
+    qapp.processEvents()
+    win._rerender()
+    qapp.processEvents()
+
+    for c in (win.fermat_canvas, win.image_canvas, win.delay_canvas,
+              win.curves_canvas):
+        x0, x1 = c._ax.get_xlim()
+        y0, y1 = c._ax.get_ylim()
+        for tk in c._ax.get_xticks():
+            assert x0 - 1e-9 <= tk <= x1 + 1e-9, f"{c}: xtick {tk} outside {x0},{x1}"
+        for tk in c._ax.get_yticks():
+            assert y0 - 1e-9 <= tk <= y1 + 1e-9, f"{c}: ytick {tk} outside {y0},{y1}"
+    win.close()
+    win.deleteLater()
+
+
+def test_axes_fill_the_widget_binding_dimension(qapp):
+    """The square sky field must fill the cell's binding (shorter) usable
+    dimension edge-to-edge and stay square on screen.
+
+    Regression: the axes were a fixed fraction of the figure, so on a wide cell
+    the square left ~150 px of dead space.  The axes now adapt to the widget:
+    the square side equals ``min(usable width, usable height)`` — the binding
+    dimension — after the fixed plot margins and the reserved colourbar strip.
+    """
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    win.resize(1500, 1050)
+    win.show()
+    qapp.processEvents()
+    win._rerender()
+    qapp.processEvents()
+
+    for cname in ("fermat_canvas", "image_canvas", "delay_canvas", "curves_canvas"):
+        c = getattr(win, cname)
+        # Usable width = cell − _MARGIN(left 46 + right 14) − colourbar strip 26
+        # (reserved for every panel so stacked panels keep identical geometry).
+        usable_w = max(c.width() - 86, 0)
+        # Usable height = cell − _MARGIN(top 22 + bottom 30).
+        usable_h = max(c.height() - 52, 0)
+        binding = min(usable_w, usable_h)
+        bb = c._ax.get_window_extent()
+        # the square fills the binding dimension edge-to-edge...
+        assert abs(bb.width - binding) <= 4, \
+            f"{cname}: axes width {bb.width:.0f} vs binding {binding}px"
+        assert abs(bb.height - binding) <= 4, \
+            f"{cname}: axes height {bb.height:.0f} vs binding {binding}px"
+        # ...and is a square on screen (equal aspect, undistorted)
+        assert abs(bb.width - bb.height) <= 2, \
+            f"{cname}: axes not square ({bb.width:.0f}x{bb.height:.0f})"
+    win.close()
+    win.deleteLater()
 
 
 @pytest.mark.slow

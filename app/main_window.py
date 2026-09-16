@@ -14,8 +14,12 @@ Layout (single window):
   |                     |  + caustic           |   source1: pos/shape/z [+x]  |
   +---------------------+---------------------+-------------------------------+
 
-All views are driven by one :class:`lensing_calc.Config` assembled from the
-Lenses panel, Sources panel and DisplayBar.
+This class is the **presenter** (the UI half).  All program state lives in
+:class:`app.controller.LensMovieController`, which this window owns and
+subscribes to.  The controller never knows about widgets; this class never
+duplicates program state — it maps widgets <-> controller and draws the
+results.  Physics stays in ``lensing_calc`` and all *look & feel* lives in
+``app/theme.qss``, so the two can be updated independently.
 """
 
 from __future__ import annotations
@@ -24,11 +28,9 @@ import numpy as np
 from PyQt5.QtCore import QTimer
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QCheckBox,
     QComboBox,
-    QFrame,
     QFileDialog,
-    QGridLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -36,13 +38,14 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
 from . import lensing_calc as lc
+from .controller import LensMovieController
 from .controls import DataBar, DisplayBar, FitBar, LensesPanel, SourcesPanel
-from .fitting import FitError
 from .plotting import CurvesCanvas, ExternalCanvas, FieldCanvas, ImageCanvas
 
 
@@ -52,16 +55,19 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("LensMovie — Interactive Lensing Viewer")
         self.resize(1500, 1050)
 
+        # --------------------------------------------------------------------
+        # Program state lives in the controller; this window is its presenter.
+        # --------------------------------------------------------------------
+        self.controller = LensMovieController(self)
+
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
 
-        # ------------------------------------------------- top row: 3D bar + external image
-        # The 3D scene stretches across the row; a fixed square panel on the right
-        # displays a user-supplied matrix. Both keep the same fixed height.
-        self._3d_height = 280
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
+        # ------------------------------------------------- top area: 3D bar + external image
+        # The external-image panel now spans BOTH the 3D bar row and the numPix
+        # display row — a tall strip on the right instead of a small square.
+        self._3d_height = 230
 
         self.scene3d = None
         self._3d_wrap = QWidget()
@@ -85,11 +91,18 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._3d_native = None
             self.statusBar().showMessage(f"3D scene unavailable: {exc}")
-        top_row.addWidget(self._3d_wrap, 1)
 
-        # Square external-image panel, same height as the 3D bar.
+        # External-image panel: taller than the 3D bar (spans the 3D + display
+        # rows) and a bit wider than before.  It is no longer a fixed square.
         self.ext_panel = QGroupBox("External image / fit data")
-        self.ext_panel.setFixedSize(self._3d_height, self._3d_height)
+        self.ext_panel.setMinimumWidth(300)
+        self.ext_panel.setMaximumWidth(400)
+        # Vertical size hint ignored: the matplotlib canvas inside would push the
+        # whole top block to ~390 px tall, shrinking the 2D grid.  The cap keeps
+        # the top block's minimum modest, and the panel is still stretched to
+        # fill the top block's full height.
+        self.ext_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+        self.ext_panel.setMinimumHeight(250)
         ext_lay = QVBoxLayout(self.ext_panel)
         ext_lay.setContentsMargins(4, 4, 4, 4)
         self.external_canvas = ExternalCanvas()
@@ -109,11 +122,8 @@ class MainWindow(QMainWindow):
 
         self._ext_label = QLabel("no file loaded")
         self._ext_label.setWordWrap(True)
-        self._ext_label.setStyleSheet("color: gray; font-size: 10px;")
+        self._ext_label.setObjectName("extStatus")
         ext_lay.addWidget(self._ext_label)
-        top_row.addWidget(self.ext_panel, 0)
-
-        root.addLayout(top_row)
 
         # ------------------------------------------ display row (settings | data)
         # Display settings and the external-image file buttons share one row but
@@ -133,10 +143,13 @@ class MainWindow(QMainWindow):
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
         sep.setFrameShadow(QFrame.Sunken)
+        sep.setObjectName("vsep")
         sep.setToolTip("external image data")
         dr.addWidget(sep)
 
-        dr.addWidget(QLabel("<b>data:</b>"), 0)
+        data_label = QLabel("<b>data:</b>")
+        data_label.setObjectName("dataLabel")
+        dr.addWidget(data_label, 0)
         dr.addWidget(self.data_bar, 0)
         dr.addStretch(1)
 
@@ -148,20 +161,43 @@ class MainWindow(QMainWindow):
         self.display_row.setFrameShape(QFrame.NoFrame)
         self.display_row.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.display_row.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.display_row.setFixedHeight(display_row.sizeHint().height() + 16)
-        root.addWidget(self.display_row)
+        self._display_row_h = display_row.sizeHint().height() + 16
+        self.display_row.setFixedHeight(self._display_row_h)
 
-        # Fitting strip.
+        # Fitting strip, under the display row (kept in the same left column).
         self.fit_bar = FitBar()
+        # Fixed vertical: never stretch to absorb leftover height in the column.
+        self.fit_bar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.fit_bar.fitRequested.connect(self._start_fit)
         self.fit_bar.cancelRequested.connect(self._cancel_fit)
-        root.addWidget(self.fit_bar)
 
-        # -------------------------------------------------------------- 2x3 grid
-        grid = QGridLayout()
-        grid.setContentsMargins(4, 2, 4, 4)
+        # Top area: a left column (3D bar + numPix/display row + fitting strip)
+        # side by side with the external panel — the panel therefore spans ALL of
+        # the left column's rows, a tall strip on the right of the window.
+        left_col = QWidget()
+        lc = QVBoxLayout(left_col)
+        lc.setContentsMargins(0, 0, 0, 0)
+        lc.setSpacing(0)
+        lc.addWidget(self._3d_wrap)
+        lc.addWidget(self.display_row)
+        lc.addWidget(self.fit_bar)
+        # Extra height (e.g. the user dragging the row splitter to enlarge the
+        # external panel) pools *below* the compact content instead of stretching
+        # gaps between the 3D bar / display row / fit strip.
+        lc.addStretch(1)
 
-        # 2D canvases
+        top_block = QWidget()
+        tb = QHBoxLayout(top_block)
+        tb.setContentsMargins(0, 0, 0, 0)
+        tb.setSpacing(4)
+        tb.addWidget(left_col, 1)
+        tb.addWidget(self.ext_panel, 0)
+
+        # ------------------------------------------------------------ 2D grid (resizable)
+        # The three columns live in a horizontal QSplitter (drag to resize), and
+        # the whole grid vs the top area live in a vertical QSplitter (drag the
+        # row heights).  The view columns hold *square* sky fields, so the whole
+        # grid sits in a centred, width-capped band to avoid wide empty gutters.
         self.fermat_canvas = FieldCanvas("Fermat potential (relative)")
         self.image_canvas = ImageCanvas()
         self.delay_canvas = FieldCanvas("Time delay (relative)")
@@ -171,23 +207,81 @@ class MainWindow(QMainWindow):
         self.lenses_panel = LensesPanel()
         self.sources_panel = SourcesPanel()
 
-        # Row 1: Fermat potential | Lens image | Lenses config
-        grid.addWidget(self.fermat_canvas, 0, 0)
-        grid.addWidget(self.image_canvas, 0, 1)
-        grid.addWidget(self.lenses_panel, 0, 2)
-        # Row 2: Time delay | Critical curve + caustic | Sources config
-        grid.addWidget(self.delay_canvas, 1, 0)
-        grid.addWidget(self.curves_canvas, 1, 1)
-        grid.addWidget(self.sources_panel, 1, 2)
+        # Column 0 pane: Fermat potential | Time delay
+        pane_view0 = QWidget()
+        v0 = QVBoxLayout(pane_view0)
+        v0.setContentsMargins(4, 2, 4, 4)
+        v0.setSpacing(4)
+        v0.addWidget(self.fermat_canvas, 1)
+        v0.addWidget(self.delay_canvas, 1)
 
-        # Column widths: the two 2D view columns get more room than the config
-        # column (sliders need less space), keeping the three in balance.
-        grid.setColumnStretch(0, 3)
-        grid.setColumnStretch(1, 3)
-        grid.setColumnStretch(2, 2)
-        grid.setRowStretch(0, 1)
-        grid.setRowStretch(1, 1)
-        root.addLayout(grid, 1)
+        # Column 1 pane: Lens image | Critical curve + caustic
+        pane_view1 = QWidget()
+        v1 = QVBoxLayout(pane_view1)
+        v1.setContentsMargins(4, 2, 4, 4)
+        v1.setSpacing(4)
+        v1.addWidget(self.image_canvas, 1)
+        v1.addWidget(self.curves_canvas, 1)
+
+        # Column 2 pane: Lenses | Sources configuration
+        pane_config = QWidget()
+        vc = QVBoxLayout(pane_config)
+        vc.setContentsMargins(4, 2, 4, 4)
+        vc.setSpacing(4)
+        vc.addWidget(self.lenses_panel, 1)
+        vc.addWidget(self.sources_panel, 1)
+
+        self.col_split = QSplitter(Qt.Horizontal)
+        self.col_split.setChildrenCollapsible(False)
+        self.col_split.addWidget(pane_view0)
+        self.col_split.addWidget(pane_view1)
+        self.col_split.addWidget(pane_config)
+        self.col_split.setStretchFactor(0, 1)
+        self.col_split.setStretchFactor(1, 1)
+        self.col_split.setStretchFactor(2, 1)
+
+        self._grid_host = QWidget()
+        gh = QVBoxLayout(self._grid_host)
+        gh.setContentsMargins(0, 0, 0, 0)
+        gh.addWidget(self.col_split)
+        self._update_grid_width(self.width())
+
+        grid_band = QHBoxLayout()
+        grid_band.setContentsMargins(0, 0, 0, 0)
+        grid_band.addStretch(1)
+        grid_band.addWidget(self._grid_host, 0)
+        grid_band.addStretch(1)
+
+        grid_block = QWidget()
+        gb = QVBoxLayout(grid_block)
+        gb.setContentsMargins(0, 0, 0, 0)
+        gb.addLayout(grid_band, 1)
+
+        # Vertical splitter: the whole top block vs the 2D grid.
+        self.row_split = QSplitter(Qt.Vertical)
+        self.row_split.setChildrenCollapsible(False)
+        self.row_split.addWidget(top_block)
+        self.row_split.addWidget(grid_block)
+        self.row_split.setStretchFactor(0, 0)
+        self.row_split.setStretchFactor(1, 1)
+        # Default split (same mechanism as the column splitter): keep the top
+        # block at its content height so the 2D grid gets the taller share.  The
+        # external panel's canvas hint would otherwise inflate the top block.
+        # Sizes are seeded from size hints (measurable before any layout), not
+        # from live widget heights, which are unreliable mid-layout.
+        top_content = int(self._3d_height + self._display_row_h
+                          + self.fit_bar.sizeHint().height())
+        self.row_split.setSizes([top_content, max(400, self.height() - top_content)])
+        root.addWidget(self.row_split, 1)
+
+        # ---------------------------------------------------- controller wiring
+        # The controller owns program state; this presenter only subscribes.
+        self.controller.fitRunningChanged.connect(self.fit_bar.set_running)
+        self.controller.fitStatus.connect(self.fit_bar.set_status)
+        self.controller.fitPreview.connect(self._fit_preview)
+        self.controller.fitFinished.connect(self._fit_finished)
+        self.controller.fitFailed.connect(self._fit_failed)
+        self.controller.statusMessage.connect(self.statusBar().showMessage)
 
         # Throttled redraw.
         self._timer = QTimer(self)
@@ -202,17 +296,104 @@ class MainWindow(QMainWindow):
         self.display_bar._three_d.toggled.connect(self._on_3d_toggled)
 
         self._last_display = self.display_bar.display()
-        self._external_array = None
-        self._noise_array = None
-        self._mask_array = None
-        self._psf_kernel = None
-        self._fit_data = None
-        self._fit_result = None
-        self._ext_desc = "no file loaded"
-        self._fit_worker = None
-        self._center_offset = (0.0, 0.0)
+        self._fit_preview_count = 0
         self._render_ok = False
         self._rerender()
+
+    # ------------------------------------------------------ state delegation
+    # The window no longer *stores* program state: it forwards reads/writes to
+    # the controller, so the two halves share no mutable state directly.
+    @property
+    def _external_array(self):
+        return self.controller.external_array
+
+    @_external_array.setter
+    def _external_array(self, value):
+        self.controller.external_array = value
+
+    @property
+    def _noise_array(self):
+        return self.controller.noise_array
+
+    @_noise_array.setter
+    def _noise_array(self, value):
+        self.controller.noise_array = value
+
+    @property
+    def _mask_array(self):
+        return self.controller.mask_array
+
+    @_mask_array.setter
+    def _mask_array(self, value):
+        self.controller.mask_array = value
+
+    @property
+    def _psf_kernel(self):
+        return self.controller.psf_kernel
+
+    @_psf_kernel.setter
+    def _psf_kernel(self, value):
+        self.controller.psf_kernel = value
+
+    @property
+    def _fit_data(self):
+        return self.controller.fit_data
+
+    @_fit_data.setter
+    def _fit_data(self, value):
+        self.controller.fit_data = value
+
+    @property
+    def _fit_result(self):
+        return self.controller.fit_result
+
+    @_fit_result.setter
+    def _fit_result(self, value):
+        self.controller.fit_result = value
+
+    @property
+    def _fit_worker(self):
+        return self.controller._fit_worker
+
+    @property
+    def _ext_desc(self):
+        return self.controller.ext_desc
+
+    @_ext_desc.setter
+    def _ext_desc(self, value):
+        self.controller.ext_desc = value
+
+    @property
+    def _center_offset(self):
+        return self.controller.center_offset
+
+    @_center_offset.setter
+    def _center_offset(self, value):
+        self.controller.center_offset = value
+
+    def _update_grid_width(self, window_w: int):
+        """Cap the centred grid band so the view columns stay ~square while the
+        config column keeps enough width for its slider rows.
+
+        A square sky field fills its cell best when that cell is roughly as tall
+        as it is wide; scaling the band with the window (clamped) turns the two
+        view columns into near-square cells.  The cap is generous enough (~1240)
+        that the two view columns stay height-bound (image does not shrink) and
+        the parameter column keeps ~500 px — wide enough to read the slider
+        thumbs.  The column QSplitter's initial sizes are seeded once (default
+        3:3:4) so a later window *resize* does not override the user's drags.
+        """
+        band = max(min(int(window_w * 0.84), 1240), 700)
+        self._grid_host.setFixedWidth(band)
+        if not getattr(self, "_col_split_seeded", False):
+            self._col_split_seeded = True
+            self.col_split.setSizes(
+                [int(band * 3 / 10), int(band * 3 / 10), int(band * 4 / 10)]
+            )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_grid_width(self.width())
 
     def _on_3d_toggled(self, enabled: bool):
         # When off we hide only the rendering canvas and keep the black area, so
@@ -243,18 +424,16 @@ class MainWindow(QMainWindow):
 
     def load_external_image_file(self, path: str) -> bool:
         """Load ``path`` into the external panel. Returns True on success."""
-        from .external_image import ImageLoadError, load_image_file
+        from .external_image import ImageLoadError
 
         try:
-            array, desc = load_image_file(path)
+            array, desc = self.controller.load_external(path)
         except ImageLoadError as exc:
             self.external_canvas.show_message(f"could not load:\n{exc}")
             self._ext_label.setText(f"error: {exc}")
             self.statusBar().showMessage(f"external image error: {exc}", 6000)
             return False
 
-        self._external_array = array
-        self._ext_desc = desc
         display = self.display_bar.display()
         self.external_canvas.update_external(
             array,
@@ -267,16 +446,14 @@ class MainWindow(QMainWindow):
         return True
 
     def _clear_external_image(self):
-        self._external_array = None
-        self._ext_desc = "no file loaded"
-        self._fit_data = None
+        self.controller.clear_external()
         self.external_canvas.show_message("no file loaded\n\nUse “Load image…” below")
         self._ext_label.setText("no file loaded")
 
     # ------------------------------------------------- noise / mask / PSF
     def _load_aux(self, kind: str):
         """Load the optional noise, mask or PSF file."""
-        from .external_image import ImageLoadError, load_image_file
+        from .external_image import ImageLoadError
 
         path, _ = QFileDialog.getOpenFileName(
             self, f"Load {kind} file", "",
@@ -286,52 +463,25 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            array, desc = load_image_file(path)
+            _, desc = self.controller.load_aux(kind, path)
         except ImageLoadError as exc:
             self._ext_label.setText(f"{kind} error: {exc}")
             self.statusBar().showMessage(f"{kind} load error: {exc}", 6000)
             return
-
-        if kind == "noise":
-            self._noise_array = array
-        elif kind == "mask":
-            self._mask_array = (array != 0)
-        else:
-            # Normalise the PSF kernel so it integrates to 1.
-            k = np.asarray(array, dtype=float)
-            if k.ndim == 2 and k.size and k.sum() > 0:
-                k = k / k.sum()
-            self._psf_kernel = k
         self.statusBar().showMessage(f"loaded {kind}: {desc}", 4000)
         self._schedule()
 
     # ------------------------------------------------- prepared fit data
     def prepare_fit_data(self):
         """Build the resampled data bundle on the model grid, or None."""
-        from .fit_data import DataPrepError, prepare_fit_data
+        from .fit_data import DataPrepError
 
-        if self._external_array is None:
-            self._fit_data = None
-            return None
-        d = self.display_bar.display()
         try:
-            self._fit_data = prepare_fit_data(
-                self._external_array,
-                source_delta_pix=d["delta_pix"],   # data scale set by the same control
-                model_num_pix=d["num_pix"],
-                model_delta_pix=d["delta_pix"],
-                center_offset=self._center_offset,
-                noise=self._noise_array,
-                mask=self._mask_array,
-                psf_kernel=self._psf_kernel,
-                psf_fwhm=d["psf_fwhm"],
-            )
+            return self.controller.prepare_fit_data(self.display_bar.display())
         except DataPrepError as exc:
-            self._fit_data = None
             self._ext_label.setText(f"prepare error: {exc}")
             self.statusBar().showMessage(f"fit-data error: {exc}", 6000)
             return None
-        return self._fit_data
 
     def _update_external_view(self, result, display):
         """Draw the external panel according to its mode selector."""
@@ -378,9 +528,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ fitting
     def _start_fit(self):
-        """Launch a PSO fit in a background thread."""
-        from .fit_worker import FitWorker
-
+        """Launch a PSO fit in a background thread (via the controller)."""
         if self._fit_worker is not None and self._fit_worker.isRunning():
             return
 
@@ -394,26 +542,18 @@ class MainWindow(QMainWindow):
 
         config = self._build_config()
         settings = self.fit_bar.settings()
-        self.fit_bar.set_running(True)
         self._fit_preview_count = 0
         self.fit_bar.set_status("fitting…")
 
-        # Lens light parameters live on the same cards as the lens itself.
-        lens_specs = self.lenses_panel.param_specs()
-        self._fit_worker = FitWorker(
-            config, data, lens_specs, lens_specs,
-            self.sources_panel.param_specs(), parent=self, **settings,
+        self.controller.start_fit(
+            config, data, self.lenses_panel.param_specs(),
+            self.sources_panel.param_specs(), settings,
         )
-        self._fit_worker.progressed.connect(self.fit_bar.set_status)
-        self._fit_worker.previewed.connect(self._fit_preview)
-        self._fit_worker.finished_ok.connect(self._fit_finished)
-        self._fit_worker.failed.connect(self._fit_failed)
         # Show the live model in the data panel while the fit runs (only when
         # previews are enabled).
         if self.fit_bar.preview_enabled():
             self._ext_mode.setCurrentText("best-fit model")
         self._fit_preview_count = 0
-        self._fit_worker.start()
 
     def _fit_preview(self, iteration, total, chi2, image):
         """Draw the swarm's current best model so the fit is visible as it runs."""
@@ -433,19 +573,14 @@ class MainWindow(QMainWindow):
         )
 
     def _cancel_fit(self):
-        if self._fit_worker is not None:
-            self._fit_worker.cancel()
-            self.fit_bar.set_status("cancelling… (finishes the current restart)")
+        self.controller.cancel_fit()
+        self.fit_bar.set_status("cancelling… (finishes the current restart)")
 
     def _fit_failed(self, message: str):
-        self.fit_bar.set_running(False)
         self.fit_bar.set_status(f"fit failed: {message}")
         self.statusBar().showMessage(f"fit failed: {message}", 6000)
 
     def _fit_finished(self, result):
-        self.fit_bar.set_running(False)
-        self._fit_result = result
-
         # Write the best-fit values back into the sliders so the whole UI shows
         # the fitted model (locked parameters are not touched: set_value is a
         # no-op while a parameter is fixed).
@@ -488,16 +623,13 @@ class MainWindow(QMainWindow):
             sources=self.sources_panel.source_list(),
             num_pix=d["num_pix"],
             delta_pix=d["delta_pix"],
-            psf_kernel=self.current_psf_kernel(),
+            psf_kernel=self.controller.current_psf_kernel(d),
             sky_amp=d["sky_amp"],
         )
 
     def current_psf_kernel(self):
         """The convolution kernel for the model: a loaded kernel, else from FWHM."""
-        if self._psf_kernel is not None:
-            return self._psf_kernel
-        d = self.display_bar.display()
-        return lc.gaussian_psf_kernel(d["psf_fwhm"], d["delta_pix"])
+        return self.controller.current_psf_kernel(self.display_bar.display())
 
     def _rerender(self):
         config = self._build_config()

@@ -35,48 +35,89 @@ interactive 3D scene.
 ## Window layout (single window)
 ```
 +------------------------------------------------------+--------------------+
-|        3D scene (Vispy) — edge-on, stretches          |  External image    |
-|         observer --------- lens plane(s) --------- source | (square, loads |
-|                                                       |  npy/fits/mat/...) |
+|  3D scene (Vispy) — edge-on, stretches                |  External image    |
+|   observer --------- lens plane(s) --------- source   |  (tall panel —     |
+|                                                       |   spans all the     |
+|   numPix [..] colormap [..] stretch [..]  (display row)|  top rows at the    |
+|   [ data: load image | clear | noise | mask | psf ]    |  right; npy/fits/   |
+|   [ Fit | Cancel ]            (fitting strip)          |  mat/... )          |
 +------------------------------------------------------+--------------------+
-|   numPix [..]    colormap [..]    stretch [..]      (display strip)        |
-+---------------------+---------------------+-------------------------------+
-|  Fermat potential   |  Lens image          |  Lenses config                |
-|                     |  (+ image positions) |   lens1: model/params/z       |
-+---------------------+---------------------+-------------------------------+
-|  Time delay         |  Critical curve      |  Sources config               |
-|                     |  + caustic           |   source1: pos/shape/z        |
-+---------------------+---------------------+-------------------------------+
+|   Fermat potential  |  Lens image         | Lenses config                  |
+|                     |  (+ image positions)|  lens1: model/params/z         |
++---------------------+---------------------+--------------------------------+
+|   Time delay        |  Critical curve     | Sources config                 |
+|                     |   + caustic         |  source1: pos/shape/z          |
++---------------------+---------------------+--------------------------------+
+```
 ```
 
 All four 2D canvases share one figure size and an Expanding size policy so the
 grid stays aligned and each canvas fills its cell on resize.
 
-Panel alignment inside the grid: every canvas places its main axes at the *same*
-fixed rectangle (``plotting._AXES_RECT``) and a colourbar goes in its own axes
-(``_CBAR_RECT``) outside it. ``tight_layout`` is deliberately not used, because it
-reflows the axes whenever a colourbar appears — which used to shrink the Lens
-image's axes to 0.571 of the figure while the Critical-curve panel sat at 0.758,
-misaligning the same sky coordinate by up to 112 px. The Critical-curve panel also
-now adopts the **model grid's field of view** instead of auto-scaling to its own
-curve extents (a 2.5x scale mismatch). Measured alignment is now 0.000 px.
+Panel geometry inside the grid: a sky field is **square** and drawn with equal
+aspect, so on a wide cell it is bounded by the cell *height*.  ``plotting``
+places the main axes at the largest such square on every resize
+(``_MplCanvas._fit_axes_to_widget``): it reserves the same pixel margins and
+the same right-side colourbar strip for *every* panel (with or without an
+actual colourbar), then centres the square — so every panel gets the same
+geometric frame (a uniform look).  A colourbar, when present, hugs the square's
+right edge in its own axes.  ``tight_layout`` is deliberately not used, because
+it reflows axes whenever a colourbar appears.  Ticks adapt to each panel's own
+range: ``MaxNLocator(nbins=5, prune="both")`` keeps a handful of round,
+readable ticks strictly *inside* the panel's arcsec limits (the old locator
+rounded a ±3.725 field up to ±4.5, floating past the image edge).
+
+Fields of view are **deliberately independent** between the Lens image and the
+Critical curve + caustic panels.  The image keeps the model grid's FOV (±3.725″
+for the default 150px/0.05″ grid).  The curves panel auto-scales to the curves
+themselves (symmetric limits with ~15% padding), so a critical curve or caustic
+that extends *past* the grid FOV is shown in full instead of being clipped at
+the panel edge — the two panels no longer line up 1:1, by design.  On the
+physics side, the critical-curve **trace window adapts to the lens scale**
+(``_critical_curve``: lens centre + ~2.5×θ_E, grid spacing scaled with the
+window so cost stays ~constant) — a large θ_E ring is returned whole instead of
+being clipped/vanishing at a fixed ±2.5 window.
+
+Rows and columns are **resizable** with ``QSplitter`` widgets:
+- ``col_split`` (horizontal): the two view panes and the configuration pane sit
+  side by side, so the column widths can be dragged.  Initial sizes are seeded
+  once (≈3:3:4 for view0 / view1 / config) and later window *resizes* keep the
+  user's drags (a single ``_col_split_seeded`` guard in ``_update_grid_width``).
+- ``row_split`` (vertical): the whole top block (3D + display row + fitting
+  strip, with the external panel beside it) vs the 2D grid.  Its default split
+  is seeded from size hints so the top block stays at its content height
+  (~306 px: 3D 230 + display 46 + fit) and the grid gets the taller share; the
+  user can drag the handle to enlarge the top block (taller external panel).
+
+Filling: a square sky field can only fill a square cell, so the 2x3 grid sits
+in a **centred, width-capped band** (``MainWindow._update_grid_width``) and the
+3D bar is 230 px tall — the two view columns end up near-square (≈361×342 px
+cells, image square ~290 px at the default 1500×1050 window), the square fills
+~its binding dimension, and gutters stay symmetric instead of leaving ~150 px of
+dead space per side.
 
 Display row notes:
 - The display settings and the external-image file buttons sit in **one row**,
   divided by a vertical separator into a `data:` group. The row's natural minimum
   width is ~1400 px, so it lives in a horizontal ``QScrollArea`` (vertical bar
   always off) and scrolls rather than clipping on a narrower window.
-- Moving the buttons out of the square external-image panel also gives that
-  panel's canvas more height.
+- The buttons live in the left column of the top block, so the external panel
+  to its right can span the full height of the top area.
 
-Top row notes:
+Top area notes:
+- The top block is a **left column** (3D bar, then the numPix/display row, then
+  the fitting strip) with the **external-image panel beside it**, spanning the
+  whole left column's height — a tall right-hand strip rather than a small
+  square (its vertical size hint is Ignored and it has a modest minimum, so the
+  matplotlib canvas inside cannot inflate the top block and shrink the grid).
 - The 3D scene has an Expanding (horizontal) / Fixed (vertical) size policy, so it
-  widens with the window while the height stays at ``_3d_height`` (280).
+  widens with the window while the height stays at ``_3d_height`` (230).
 - The **3D scene** checkbox in the display strip switches rendering off: only the
   GL canvas is hidden, leaving a black background, so the layout does not reflow
   and the scene rebuild (mesh + GL upload) is skipped.
-- The external-image panel is a fixed square of side ``_3d_height`` on the right of
-  the same row and displays matrices loaded by ``external_image.load_image_file``.
+- The external panel displays matrices loaded by ``external_image.load_image_file``
+  (data / on model grid / best-fit model / residual), so it doubles as the
+  fit-result viewer.
 
 ## Parameters (per lens / per source)
 Each lens plane carries: model type, theta_E, shear g1/g2, center x/y, **redshift**.
@@ -118,20 +159,47 @@ Source model -> lenstronomy kwargs (all resolved/extended, none are point source
 LensMovie/
   app/
     __init__.py
-    main.py        # entry point
-    main_window.py # main window: top 3D bar, display strip, 2x3 grid
-    controls.py    # LensesPanel + SourcesPanel + DisplayBar (add/remove entries)
-    plotting.py    # matplotlib canvases: Field/Image/Curves/External
+    main.py        # entry point (+ applies the theme)
+    controller.py  # LensMovieController: program state + operations; the UI↔program boundary
+    main_window.py # presenter: top 3D bar, display strip, 2x3 grid; widget↔controller binding
+    controls.py    # LensesPanel + SourcesPanel + DisplayBar + DataBar + FitBar
+    plotting.py    # matplotlib canvases (Field/Image/Curves/External), theme-aware
     external_image.py # load user-supplied matrices (npy/fits/mat/text/images)
     fit_data.py    # resample data/noise/mask onto the model grid + chi2
     fitting.py     # FittingSequence inputs + PSO run (locks -> kwargs_fixed)
     fit_worker.py  # QThread wrapper for a non-blocking fit
     lensing_calc.py# lenstronomy physics: multi-plane sim, arrival time (Fermat), cc/caustic, image positions
     scene3d.py     # vispy -> edge-on 3D scene (top bar)
+    theme.py       # palette + QSS loader + matplotlib dark style (the app's "skin")
+    theme.qss      # Qt stylesheet — restyle the whole app in this one file
+  tools/render_screenshot.py  # render the themed window to a PNG (visual checks)
   pyproject.toml
   DESIGN.md
   README.md
 ```
+
+### UI / program separation (topology)
+```
+┌────────────────────────────── UI layer (beautify freely) ──────────────────┐
+│  theme.py + theme.qss   ← the single "skin" (colours, fonts, widget chrome) │
+│  main_window.py         ← presenter: maps widgets ↔ controller, draws views │
+│  controls.py / plotting.py / scene3d.py  ← widgets & pure display views     │
+└────────────────────────────────────▲────────────────────────────────────────┘
+           reads/writes state,       │  Qt signals
+           no widget knowledge       │
+┌────────────────────────────────────▼────────────────────────────────────────┐
+│  controller.LensMovieController    ← owns data/noise/mask/psf, fit data+run │
+└────────────────────────────────────▲────────────────────────────────────────┘
+           Config / SimResult (stable contracts)
+┌────────────────────────────────────▼────────────────────────────────────────┐
+│  lensing_calc.py / fitting.py / fit_data.py  ← physics core, no Qt          │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+Why this shape: the physics core was already a clean `Config → compute →
+SimResult` contract; what had leaked into the window (state, styling, fit
+coordination) is now owned by `controller.py` (program) and `theme.qss` (ui),
+so either half can be updated without touching the other.
 
 ## Physics core (lensing_calc)
 - `LensModel(..., multi_plane=True, lens_redshift_list=[...], z_source=...)`.
@@ -152,6 +220,15 @@ conda run -n lenstronomy_env python -m app.main
   NVIDIA EGL/GL libs; the qt5 backend embeds as a real QWidget.
 - Scene content: translucent lens-mass plane (density ~ r^-2 -> height/color)
   plus colored light-ray strips bending through the lens.
+- **Smooth ray bends**: each ray is a dense **Catmull-Rom spline** through
+  control points (source → leave/arrive at every lens plane → observer), with
+  each plane's pair spread slightly in x so the spline rounds the kink into a
+  smooth bend (max segment turn ~14° vs a ~90° corner before).  Deliberately a
+  *display* change — the per-lens deflection amounts/directions are unchanged.
+- **Camera interaction** (`PanTurntableCamera`, subclass of TurntableCamera):
+  LMB rotate · RMB / scroll zoom · **middle-drag pan** (new) · SHIFT+LMB pan
+  (vispy-native) · SHIFT+RMB fov.  The camera centre is *not* reset on scene
+  rebuilds, so a pan survives parameter changes.
 - Implementation notes for vispy 0.14 (encountered during build):
   * `SurfacePlot` + `colors` has an ordering bug (set_vertex_colors before
     faces); build the surface as an explicit `scene.visuals.Mesh` instead.
