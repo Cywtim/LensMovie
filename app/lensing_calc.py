@@ -253,6 +253,8 @@ class SimResult:
     num_pix: int
     delta_pix: float
     ref_z_source: float
+    source_x: float = 0.0           # reference source plane x (arcsec)
+    source_y: float = 0.0           # reference source plane y (arcsec)
     ok: bool = True
     error: str = ""
 
@@ -523,6 +525,8 @@ def compute(config: Config, ref_source_index: int = -1) -> SimResult:
             caustic_ra=caustic_ra,
             caustic_dec=caustic_dec,
             image_positions=image_positions,
+            source_x=ref_x,
+            source_y=ref_y,
             num_pix=num_pix,
             delta_pix=delta_pix,
             ref_z_source=ref_z,

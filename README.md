@@ -60,8 +60,14 @@ Single-window layout:
 - **Lower half — a 2-row x 3-column grid**:
   | | col 1 | col 2 | col 3 |
   |---|---|---|---|
-  | row 1 | Fermat potential | Lens image (+ image positions) | **Lenses** config |
-  | row 2 | Time delay | Critical curve + caustic | **Sources / points** config |
+  | row 1 | Fermat potential (+ image positions) | Lens image (+ image positions) | **Lenses** config |
+  | row 2 | Time delay (+ image positions) | Critical curve + caustic (+ image positions, source star) | **Sources / points** config |
+  - The **image positions** (solved per source, colour-coded by source) are
+    overlaid on Fermat potential, Time delay, Lens image and Critical curve —
+    all four live in the lens plane.  The Critical-curve panel additionally
+    marks each **source position** with a gold star; it sits in the source
+    plane, next to the caustic.  The curve panel auto-scales to include the
+    markers, so nothing is clipped.
 - **Config panels**:
   - **Multiple lenses**: each with model selection (`SIS` / `SIE` / `SPEP` /
     `PEMD` / `NFW` / `SIS_TRUNCATED`; PEMD only when `fastell4py` is present), own

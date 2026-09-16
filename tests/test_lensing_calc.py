@@ -389,3 +389,21 @@ def test_source_param_names_follow_model():
     # mutually exclusive families
     assert "sigma" not in lc.source_param_names("SERSIC")
     assert "R_sersic" not in lc.source_param_names("GAUSSIAN")
+
+
+def test_compute_carries_source_and_image_positions():
+    cfg = lc.Config(num_pix=40, delta_pix=0.1)
+    cfg.sources = [lc.SourceParams(amp=1.0, R_sersic=0.3, n_sersic=2.0,
+                                   center_x=0.15, center_y=-0.1, redshift=0.6)]
+    cfg.lenses = [lc.LensParams(model="SIE", theta_E=0.6, e1=0.08, e2=0.05,
+                                center_x=0.0, center_y=0.0)]
+    res = lc.compute(cfg)
+    assert res.ok
+    # reference source position round-trips into the result
+    assert abs(res.source_x - 0.15) < 1e-9
+    assert abs(res.source_y - (-0.1)) < 1e-9
+    # images are solved for the only source and all are returned
+    assert len(res.image_positions) == 1
+    xs, ys, ci = res.image_positions[0]
+    assert xs.size >= 2          # an SIE of a near-axis source has >=2 images
+    assert ci == 0               # colour index == source index

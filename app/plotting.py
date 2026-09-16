@@ -88,7 +88,31 @@ class _MplCanvas(FigureCanvas):
         self.setMinimumSize(80, 80)
         self._ax = self._figure.add_axes(_AXES_RECT)
         self._cax = None
+        self._markers = []   # per-source point markers (image / source positions)
         self._fit_axes_to_widget()
+
+    def _set_markers(self, positions, marker="o", ms=5, container=None):
+        """Refresh per-source point markers: (x_arr, y_arr, color_idx) triples.
+
+        Empty arrays draw nothing.  Called on every update so stale markers are
+        removed; the same colour scheme as the lens-image panel is used.  Pass
+        ``container`` to draw several independent marker sets on one canvas
+        (e.g. image circles and the source star) without wiping each other.
+        """
+        target = self._markers if container is None else container
+        for m in target:
+            try:
+                m.remove()
+            except Exception:
+                pass
+        target.clear()
+        colors = theme.MARKER_COLORS
+        for x, y, ci in positions:
+            if len(np.asarray(x)):
+                (mk,) = self._ax.plot(
+                    x, y, marker, ms=ms, mec="k", mfc=colors[ci % len(colors)]
+                )
+                target.append(mk)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -179,7 +203,8 @@ class FieldCanvas(_MplCanvas):
         self._cb = None
 
     def update_field(self, field: np.ndarray, num_pix: int, delta_pix: float,
-                     colormap="magma", stretch="linear", sym=False):
+                     colormap="magma", stretch="linear", sym=False,
+                     image_positions=()):
         data = np.asarray(field, dtype=float)
         if stretch == "log" and data.min() >= 0:
             vmin = max(data.max() * 1e-5, np.finfo(float).eps)
@@ -201,6 +226,7 @@ class FieldCanvas(_MplCanvas):
             self._im.set_extent(bounds)
             self._im.set_cmap(_COLORMAPS.get(colormap, cm.magma))
             self._im.set_clim(-vmax if sym else view.min(), vmax)
+        self._set_markers(image_positions, marker="o", ms=5)
         self._ax.set_aspect("equal", adjustable="box")
         self.draw_idle()
 
@@ -267,19 +293,29 @@ class ImageCanvas(_MplCanvas):
 class CurvesCanvas(_MplCanvas):
     """Critical curve + caustic plotted on an empty sky grid."""
 
+    # Legend handles for the point markers (patterns must match those drawn).
+    _SOURCE_MARKER = "*"
+
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self._style_axes("Critical curve + caustic")
         s = theme.CANVAS_STYLE
         self._ax.grid(True, color=s["grid"], alpha=0.5)
+        self._img_markers = []     # image-position circles (lens plane)
+        self._src_markers = []     # source-position stars (source plane)
         (self._cc,) = self._ax.plot([], [], lw=1.6, color="cyan", label="critical curve")
         (self._caustic,) = self._ax.plot([], [], lw=1.6, ls="--", color="red", label="caustic")
+        (self._src_marker,) = self._ax.plot(
+            [], [], self._SOURCE_MARKER, ms=13, mec="k", mfc="gold", label="source")
+        (self._img_marker,) = self._ax.plot(
+            [], [], "o", ms=5, mec="k", mfc="w", label="image")
         self._ax.legend(loc="upper right", fontsize=7, framealpha=0.6,
                         facecolor=s["legend_face"], edgecolor=s["legend_edge"],
                         labelcolor=s["text"])
 
     def update_curves(self, cc_ra, cc_dec, caustic_ra, caustic_dec,
-                      num_pix=None, delta_pix=None):
+                      num_pix=None, delta_pix=None, image_positions=(),
+                      source_positions=()):
         """Draw the curves **auto-scaled to their own extents**.
 
         Deliberately *not* the lens-image grid FOV: a critical curve / caustic
@@ -287,12 +323,23 @@ class CurvesCanvas(_MplCanvas):
         edge.  Scaling to the curves (with ~15% padding, symmetric about the
         lens centre) always shows the whole curve.  ``num_pix``/``delta_pix``
         are only used as a fallback when there are no curve points at all.
+        Image and source markers are drawn on top and included in the scaling,
+        so they can never fall outside the visible window.
         """
         self._set_curve(self._cc, cc_ra, cc_dec)
         self._set_curve(self._caustic, caustic_ra, caustic_dec)
+        self._set_markers(image_positions, marker="o", ms=5,
+                          container=self._img_markers)
+        # The reference source sits in the *source* plane, next to the caustic.
+        self._set_markers(source_positions, marker=self._SOURCE_MARKER, ms=13,
+                          container=self._src_markers)
 
         coords = [np.asarray(a, dtype=float)
                   for a in (cc_ra, cc_dec, caustic_ra, caustic_dec)]
+        for x, y, _ci in list(image_positions) + list(source_positions):
+            xa, ya = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+            if xa.size:
+                coords += [xa, ya]
         pts = np.concatenate([c for c in coords if c.size]) \
             if any(c.size for c in coords) else None
         if pts is not None and pts.size:

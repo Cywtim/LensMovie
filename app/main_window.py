@@ -677,6 +677,7 @@ class MainWindow(QMainWindow):
         self.fermat_canvas.update_field(
             result.fermat, num_pix, delta,
             colormap=display["colormap"], stretch="linear", sym=True,
+            image_positions=result.image_positions,
         )
         self.image_canvas.update_image(
             result.image, num_pix, delta, result.image_positions,
@@ -685,11 +686,20 @@ class MainWindow(QMainWindow):
         self.delay_canvas.update_field(
             result.time_delay, num_pix, delta,
             colormap=display["colormap"], stretch=display["stretch"],
+            image_positions=result.image_positions,
         )
-        # Same field of view as the image so the two panels line up in x.
+        # Same field of view as the image so the two panels line up in x.  Image
+        # positions live in the lens plane (← critical curve side); each source's
+        # own centre sits in the source plane (← caustic side, gold star).
+        source_positions = [
+            (np.array([s.center_x]), np.array([s.center_y]), i)
+            for i, s in enumerate(config.sources)
+        ]
         self.curves_canvas.update_curves(
             result.cc_ra, result.cc_dec, result.caustic_ra, result.caustic_dec,
             num_pix, delta,
+            image_positions=result.image_positions,
+            source_positions=source_positions,
         )
 
         # Keep an already-loaded external matrix in sync with the display

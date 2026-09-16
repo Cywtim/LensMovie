@@ -1239,3 +1239,36 @@ def test_lens_light_sliders_follow_light_model(qapp):
     assert not lens.sliders["light_sigma"].isVisible()
     assert not lens.sliders["light_R_sersic"].isVisible()
     lp.deleteLater()
+
+
+def test_positions_drawn_on_field_and_curve_canvases(qapp):
+    """Image positions appear on Fermat / time-delay / critical curve; the
+    reference source position is marked on the critical-curve panel."""
+    from app.main_window import MainWindow
+    from app import lensing_calc as lc
+
+    win = MainWindow()
+    win.resize(1500, 1050)
+    win.show()
+    qapp.processEvents()
+    # A source far enough off-axis to yield several well-separated images.
+    win.lenses_panel._cards[0]._model_combo.setCurrentText("SIE")
+    win.sources_panel._cards[0].sliders["center_x"].set_value(0.2)
+    win.sources_panel._cards[0].sliders["center_y"].set_value(0.1)
+    win._rerender()
+    qapp.processEvents()
+
+    assert win.fermat_canvas._markers, "no image markers on Fermat canvas"
+    assert win.delay_canvas._markers, "no image markers on time-delay canvas"
+    # curves canvas got both image markers and the source star
+    curves = win.curves_canvas
+    assert curves._img_markers and curves._src_markers, \
+        "image/source markers missing on critical-curve canvas"
+    metas = [m.get_marker() for m in curves._img_markers + curves._src_markers]
+    assert "o" in metas, "image markers missing on critical curve"
+    assert "*" in metas, "source star missing on critical curve"
+    # legend gained image + source entries
+    labels = [t.get_text() for t in curves._ax.get_legend().get_texts()]
+    assert "image" in labels and "source" in labels
+    win.close()
+    win.deleteLater()
