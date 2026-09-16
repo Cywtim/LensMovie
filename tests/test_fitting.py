@@ -248,10 +248,15 @@ def test_run_pso_emits_converging_previews():
         assert np.isfinite(chi2) and chi2 > 0
         assert img.shape == data.image.shape     # a renderable model each time
         assert np.isfinite(img).all()
-    # chi2 must come down over the run
-    assert seen[-1][2] < seen[0][2]
-    # and the previews agree with the final answer
-    assert res.chi2_after <= seen[0][2]
+    # The swarm's global best can only improve, so the previewed chi2 must be
+    # monotonically non-increasing. (Strict decrease is not guaranteed: the
+    # initial random swarm may already contain a near-perfect particle.)
+    chi2s = [c for _, _, c, _ in seen]
+    assert all(b <= a + 1e-6 for a, b in zip(chi2s, chi2s[1:])), chi2s
+    # The fit itself must be an improvement on the starting model, and the final
+    # answer must be at least as good as anything previewed.
+    assert res.chi2_after < res.chi2_before
+    assert res.chi2_after <= min(chi2s) + 1e-6
 
 
 @pytest.mark.slow

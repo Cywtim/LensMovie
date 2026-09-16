@@ -91,6 +91,14 @@ Each source is an **extended** profile (`SERSIC_ELLIPSE`, `SERSIC`,
 Display: numPix, **pixel scale (delta_pix, arcsec/px)**, **PSF FWHM**, colormap,
 stretch.
 
+Every parameter is a **slider plus an editable number box**. The box is
+authoritative (``_Slider.value()`` reads it) and is given one more decimal than
+the readout used to show, i.e. finer than the slider's 1000-step quantisation, so
+typing ``1.105`` is not snapped to ``1.1044``. Dragging mirrors the slider into the
+box; typing moves the slider to its nearest step with the slider's signals blocked,
+so the typed value is not bounced back. ``setKeyboardTracking(False)`` makes edits
+commit on Enter/focus-out rather than per keystroke.
+
 Every parameter slider carries a **fix (lock)** toggle. Fixing freezes the value:
 the slider is disabled and both ``_Slider.set_value`` and a direct
 ``QSlider.setValue`` are reverted, so no code path can change it. Unfixing is
@@ -196,6 +204,10 @@ Notes learned while building it:
   renderer. Benchmarked on a 200-iteration fit: 10.7 s off vs 10.0 s at 0.1 s,
   10.3 s at 0.5 s and 10.3 s at 2 s - the overhead is below run-to-run noise,
   because a preview only fires a handful of times and uses the cheap render path.
+- The previewed chi2 is the fitter's **own** objective (``-2*logL``, calibrated
+  onto the chi2 scale on the first preview), not a recomputed chi2: the swarm's
+  global best is monotonic by construction, whereas recomputing with a different
+  noise/mask path wobbled and made the reported progress look non-monotonic.
 - Previews use ``lensing_calc.render_image`` (image only) rather than ``compute``,
   which also does the Fermat/time-delay fields, critical curve, caustic and image
   positions. Previews are throttled by *time* (0.35 s) so the extra rendering

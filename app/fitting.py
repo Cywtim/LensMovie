@@ -389,6 +389,7 @@ def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
 
     best_pos = init_pos
     last_preview = 0.0
+    offset = None      # maps lenstronomy's logL onto our chi2 scale
     for it, _ in enumerate(swarm.sample(max_iter=int(n_iterations), verbose=False)):
         best_pos = swarm.global_best.position
 
@@ -400,8 +401,17 @@ def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
                 cfg_i = model_config_from_result(config, kw_i, data.num_pix,
                                                  ref_source_index)
                 image_i = lc.render_image(cfg_i)
-                # lenstronomy's logL is -chi2/2, so this needs no extra render.
-                chi2_i = fd.chi2(image_i, data)
+
+                # Report the fitter's OWN objective rather than recomputing it:
+                # the swarm's global best is monotonic by construction, whereas a
+                # recomputed chi2 (different noise/mask handling inside
+                # lenstronomy's likelihood) can wobble. logL = -chi2/2 up to a
+                # constant, calibrated on the first preview so the numbers are
+                # comparable with the final chi2.
+                logl = float(swarm.global_best.fitness)
+                if offset is None:
+                    offset = fd.chi2(image_i, data) + 2.0 * logl
+                chi2_i = -2.0 * logl + offset
                 preview(it + 1, int(n_iterations), chi2_i, image_i)
             except Exception:
                 pass      # a preview must never break the fit

@@ -813,3 +813,70 @@ def test_window_wires_data_bar_to_its_loaders(qapp):
         signal.disconnect()        # TypeError if the window never connected it
     win.close()
     win.deleteLater()
+
+
+# ------------------------------------------------- slider + numeric input
+def test_parameter_accepts_a_typed_exact_value(qapp):
+    """Sliders cannot hit exact values; the number box can, and it wins."""
+    from app.controls import LensesPanel
+
+    panel = LensesPanel()
+    row = panel._cards[0].sliders["theta_E"]
+    step = (row.vmax - row.vmin) / 1000.0
+    assert step > 1e-3, "pick a parameter whose slider step is coarse"
+
+    exact = 1.1050                      # not representable on the slider
+    row._value.setValue(exact)
+    assert abs(row.value() - exact) < 1e-9          # exact value kept
+    assert abs(row.slider_value() - exact) <= step  # slider only snaps nearby
+    # and the model actually gets the typed value
+    assert abs(panel._cards[0].to_params().theta_E - exact) < 1e-9
+    panel.deleteLater()
+
+
+def test_dragging_the_slider_updates_the_number_box(qapp):
+    from app.controls import LensesPanel
+
+    panel = LensesPanel()
+    row = panel._cards[0].sliders["theta_E"]
+    row._slider.setValue(row._to_int(2.0))
+    # the box rounds the slider's position to its own (finer) resolution
+    res = 10.0 ** -row._value.decimals()
+    assert abs(row._value.value() - row.slider_value()) <= res
+    assert abs(row.value() - 2.0) < 0.01
+    panel.deleteLater()
+
+
+def test_typing_emits_changed_once_and_can_be_locked(qapp):
+    from app.controls import LensesPanel
+
+    panel = LensesPanel()
+    row = panel._cards[0].sliders["theta_E"]
+    seen = []
+    panel.changed.connect(lambda: seen.append(1))
+
+    row._value.setValue(1.5)                    # typing
+    assert len(seen) == 1, "typing should emit exactly one change"
+    row._slider.setValue(row._to_int(0.9))      # dragging
+    assert len(seen) == 2, "dragging should emit exactly one change"
+
+    # A locked parameter ignores typing just like dragging.
+    row.set_value(1.2)
+    row.set_fixed(True)
+    assert row._value.isEnabled() is False
+    row._value.setValue(2.9)
+    assert abs(row.value() - 1.2) < 1e-9
+    panel.deleteLater()
+
+
+def test_fit_uses_the_typed_value_not_the_slider_snap(qapp):
+    """The typed precision must reach the fit, not the coarse slider position."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    card = win.lenses_panel._cards[0]
+    card.sliders["theta_E"]._value.setValue(1.1050)
+    assert abs(win._build_config().lenses[0].theta_E - 1.1050) < 1e-9
+    assert abs(card.sliders["theta_E"].slider_value() - 1.1050) > 1e-4
+    win.close()
+    win.deleteLater()

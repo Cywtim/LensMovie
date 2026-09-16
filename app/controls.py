@@ -30,11 +30,16 @@ from . import lensing_calc as lc
 
 
 class _Slider(QWidget):
-    """A labelled slider with a live numeric readout and a "fix" (lock) button.
+    """A labelled slider **plus an editable number box**, and a "fix" (lock) button.
 
-    Fixing a parameter locks its value: the slider is disabled and programmatic
-    :meth:`set_value` calls are ignored. A fixed parameter can only be released
-    by the user (see :meth:`set_fixed`).
+    Dragging a 1000-step slider cannot hit an exact value, so the value is also
+    editable: either drag, or type the precise number. The spin box is the
+    authoritative value (:meth:`value` reads it), so a typed value keeps its full
+    precision even though the slider can only snap to its nearest step.
+
+    Fixing a parameter locks its value: both the slider and the box are disabled
+    and programmatic :meth:`set_value` calls are ignored. A fixed parameter can
+    only be released by the user (see :meth:`set_fixed`).
     """
 
     changed = pyqtSignal()
@@ -47,13 +52,23 @@ class _Slider(QWidget):
         self._fixed = False
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
         self._label = QLabel(label)
-        self._label.setMinimumWidth(64)
+        self._label.setMinimumWidth(60)
         self._slider = QSlider(Qt.Horizontal)
         self._slider.setRange(0, 1000)
-        self._frozen_int = 0  # last accepted position (used to revert when fixed)
-        self._value = QLabel()
-        self._value.setMinimumWidth(52)
+        self._frozen_int = 0      # last accepted slider position (revert when fixed)
+        self._frozen_value = 0.0  # last accepted exact value (revert when fixed)
+
+        # Editable value. It is given one more decimal than the readout used to
+        # show, i.e. finer than the slider's own step, so typing is worthwhile.
+        self._value = QDoubleSpinBox()
+        self._value.setRange(float(vmin), float(vmax))
+        self._value.setDecimals(max(int(decimals), 3))
+        self._value.setSingleStep(max((vmax - vmin) / 200.0, 10 ** -max(int(decimals), 3)))
+        self._value.setKeyboardTracking(False)   # act on commit, not per keystroke
+        self._value.setMinimumWidth(84)
+        self._value.setToolTip("type an exact value, or drag the slider")
 
         # "Fix" toggle: locked parameters cannot be changed by anything except
         # the user unlocking them again.
@@ -67,7 +82,8 @@ class _Slider(QWidget):
         lay.addWidget(self._slider, 1)
         lay.addWidget(self._value)
         lay.addWidget(self._lock_btn)
-        self._slider.valueChanged.connect(self._on_change)
+        self._slider.valueChanged.connect(self._on_slider)
+        self._value.valueChanged.connect(self._on_spin)
         self.set_value(value)
 
     def _to_int(self, v):
@@ -77,7 +93,8 @@ class _Slider(QWidget):
     def _from_int(self, n):
         return self.vmin + n / 1000.0 * (self.vmax - self.vmin)
 
-    def _on_change(self, n):
+    def _on_slider(self, n):
+        """The user dragged the slider: mirror it into the exact-value box."""
         if self._fixed:
             # A fixed parameter must not change through *any* path, including a
             # programmatic setValue on the underlying widget: snap it back.
@@ -85,8 +102,30 @@ class _Slider(QWidget):
             self._slider.setValue(self._frozen_int)
             self._slider.blockSignals(False)
             return
+        v = self._from_int(n)
         self._frozen_int = n
-        self._value.setText(f"{self._from_int(n):.{self.decimals}f}")
+        self._frozen_value = v
+        self._value.blockSignals(True)
+        self._value.setValue(v)
+        self._value.blockSignals(False)
+        self.changed.emit()
+
+    def _on_spin(self, v):
+        """The user typed a value: move the slider to its nearest step.
+
+        The slider's signals are blocked so this cannot bounce the typed value
+        back to the (coarser) slider position.
+        """
+        if self._fixed:
+            self._value.blockSignals(True)
+            self._value.setValue(self._frozen_value)
+            self._value.blockSignals(False)
+            return
+        self._frozen_value = float(v)
+        self._frozen_int = self._to_int(v)
+        self._slider.blockSignals(True)
+        self._slider.setValue(self._frozen_int)
+        self._slider.blockSignals(False)
         self.changed.emit()
 
     def _on_lock_toggled(self, checked):
@@ -124,23 +163,32 @@ class _Slider(QWidget):
         )
         self._slider.setEnabled(not fixed)
         self._label.setEnabled(not fixed)
-        self._value.setEnabled(not fixed)
+        self._value.setEnabled(not fixed)      # the number box is locked too
         if fixed:
-            # Remember the frozen position so any later change attempt reverts.
+            # Remember the frozen state so any later change attempt reverts.
             self._frozen_int = self._slider.value()
+            self._frozen_value = self._value.value()
         self.fixedChanged.emit(fixed)
 
     def set_value(self, v):
         # A fixed parameter keeps its value; nothing may change it silently.
         if self._fixed:
             return
+        self._frozen_int = self._to_int(v)
+        self._frozen_value = float(v)
         self._slider.blockSignals(True)
-        self._slider.setValue(self._to_int(v))
+        self._slider.setValue(self._frozen_int)
         self._slider.blockSignals(False)
-        self._frozen_int = self._slider.value()
-        self._value.setText(f"{v:.{self.decimals}f}")
+        self._value.blockSignals(True)
+        self._value.setValue(float(v))
+        self._value.blockSignals(False)
 
     def value(self):
+        """The exact value: the number box wins over the quantised slider."""
+        return float(self._value.value())
+
+    def slider_value(self):
+        """The value implied by the slider's (quantised) position."""
         return self._from_int(self._slider.value())
 
 

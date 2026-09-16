@@ -73,6 +73,10 @@ Single-window layout:
     **redshift**; add/remove.
   - Physics via lenstronomy **multi-plane** lensing; one source-plane redshift is
     used as the reference for the 2D scalar fields.
+  - **Every parameter is slider _and_ numeric input**: each slider has an editable
+    number box beside it, so you can drag for a quick feel or type an exact value
+    (the box carries one more decimal than the slider's step). The typed value is
+    what the model and any fit use, so precision is not lost to the slider's snap.
   - **Fix (lock) button per parameter**: the 🔓 button beside every lens/source
     slider locks that parameter. A fixed parameter cannot be changed by anything
     — the slider is disabled, the value is frozen, and even programmatic updates
