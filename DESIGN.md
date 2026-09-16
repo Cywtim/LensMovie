@@ -6,8 +6,9 @@ user-controlled parameters. Real-time re-render of both a 2D image-plane view an
 interactive 3D scene.
 
 ## Confirmed design decisions (from user)
-- **Lens model**: multiple lens planes, each selectable (SIS / SPEP-ELLIPSE / PEMD,
-  extensible), each with its own redshift and parameters, addable/removable.
+- **Lens model**: multiple lens planes, each selectable (SIS / SIE / SPEP / PEMD /
+  NFW / SIS_TRUNCATED, extensible), each with its own redshift and parameters,
+  addable/removable.
 - **Source**: multiple sources, each with position/shape and its own redshift,
   addable/removable.
 - **Interaction**: parameter controls re-render in real time.
@@ -121,14 +122,27 @@ Top area notes:
 
 ## Parameters (per lens / per source)
 Each lens plane carries: model type, theta_E, shear g1/g2, center x/y, **redshift**.
+Lens model -> lenstronomy kwargs (`_MODEL_PROFILE` / `lens_kwargs`; PEMD hidden when
+`fastell4py` is absent):
+
+| model | physical meaning | kwargs |
+|---|---|---|
+| SIS | singular isothermal sphere | theta_E |
+| SIE | elliptical isothermal (no gamma) | theta_E, e1, e2 |
+| SPEP | power-law singular isothermal ellipsoid | theta_E, gamma, e1, e2 |
+| PEMD | power-law ellipsoidal mass distribution (needs fastell4py) | theta_E, gamma, e1, e2 |
+| NFW | Navarro-Frenk-White dark-matter halo | Rs, alpha_Rs |
+| SIS_TRUNCATED | truncated isothermal | theta_E, r_trunc |
+
 Each lens also carries **deflector light**: `light_model`
 (`NONE` / `SERSIC_ELLIPSE` / `SERSIC` / `GAUSSIAN_ELLIPSE` / `GAUSSIAN`) with
 `light_amp`, `light_R_sersic`, `light_n_sersic`, `light_sigma`, `light_e1/e2`.
 This is image-plane light and is **not lensed**; it is rendered once and added to
 the model image (`_render_lens_light`). `Config.sky_amp` adds a constant pedestal.
 Each source is an **extended** profile (`SERSIC_ELLIPSE`, `SERSIC`,
-`GAUSSIAN_ELLIPSE`, `GAUSSIAN`) and carries: position, ellipticity, size
-(`R_sersic` or `sigma`), `n_sersic`, amplitude and **redshift**.
+`GAUSSIAN_ELLIPSE`, `GAUSSIAN`, `HERNQUIST`, `CORE_SERSIC`) and carries: position,
+ellipticity, size (`R_sersic` / `sigma` / `Rs`), `n_sersic`, amplitude and
+**redshift**.
 Display: numPix, **pixel scale (delta_pix, arcsec/px)**, **PSF FWHM**, colormap,
 stretch.
 
@@ -153,6 +167,51 @@ Source model -> lenstronomy kwargs (all resolved/extended, none are point source
 | SERSIC | amp, R_sersic, n_sersic, center_x, center_y |
 | GAUSSIAN_ELLIPSE | amp, sigma, e1, e2, center_x, center_y |
 | GAUSSIAN | amp, sigma, center_x, center_y |
+| HERNQUIST | amp, Rs, center_x, center_y |
+| CORE_SERSIC | amp, R_sersic, Rb, n_sersic, gamma, e1, e2, center_x, center_y |
+
+### Point sources
+Beside the extended sources, the config carries an optional list of
+**point sources** (`Config.point_sources`, each a `PointSourceParams`). They
+render as PSF-convolved spikes and are additive with the extended light
+(`_render_point_sources`). Two models:
+
+| model | plane | kwargs (`lens_source_kwargs`) | meaning |
+|---|---|---|---|
+| LENSED | source plane | `SOURCE_POSITION` ra_source, dec_source, source_amp | lensed quasar / AGN: the images + magnification are **solved** from the source plane |
+| UNLENSED | image plane | `UNLENSED` ra_image, dec_image, point_amp | foreground star on the sky, fixed in the image plane |
+
+Each entry carries a **redshift** and a `ref_source` link: `ref_source >= 0` makes
+the point source ride on that source's centre and redshift (the Source card's
+"point" checkbox — an AGN on top of its host galaxy), otherwise it keeps its own
+position (`position_and_redshift` resolves this). Amplitude semantics differ from
+extended sources: `source_amp` / `point_amp` are **integral fluxes** (the spike
+carries that total light at the PSF-convolved peak), whereas an extended profile's
+`amp` is a peak surface brightness — so point sources get their own, separate
+slider ranges.
+
+Rendering requires a PSF kernel of odd size >= 3 px: lenstronomy's sub-pixel shift
+of a bare 1x1 delta kernel loses all of the spike's flux (and supersampling it
+raises), so `_point_source_kernel` promotes a 1x1 delta to a 3x3 centre-only
+kernel — still a pixel-delta, but numerically well-behaved.
+
+### Point sources and fitting (forward ≠ fit direction)
+This is the asymmetry the user flagged: forward rendering solves the lens
+equation *from the source plane* (`SOURCE_POSITION`), while a **fit** works in the
+*image plane*, because the observed quantity is the image positions:
+
+* `_point_source_entries` seeds each fit entry from a forward solve
+  (`findBrightImage`, `_seed_image_positions`) and parameterises it as
+  `LENSED_POSITION` (ra_image[], dec_image[], source_amp with
+  `fixed_magnification=True`) or `UNLENSED` — the ra_image/dec_image positions
+  are always sampled; amplitudes are linear-solver parameters unless locked.
+* `kwargs_model` gets `point_source_model_list` + `fixed_magnification_list`;
+  `kwargs_params` gets a `"point_source_model"` entry.
+* `_ps_roundtrip` / `model_config_from_result` maps the fitted image-plane kwargs
+  back to the app's source-plane model via `PointSource.source_position()`
+  (ray-shoot the images back) and `source_amplitude()` (mean of the
+  magnification-corrected on-sky flux), so re-rendering the fitted config
+  reproduces exactly what the fitter saw.
 
 ## Modules
 ```

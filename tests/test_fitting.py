@@ -329,3 +329,99 @@ def test_previews_off_costs_nothing_and_skips_the_callback():
                      preview=None)          # what the worker passes when unchecked
     assert res.ok, res.error
     assert res.chi2_after < res.chi2_before
+
+
+# ---------------------------------------------------------------- point sources
+
+def _tiny_data(config):
+    """A minimal FitData on the config grid (needed only by build_setup)."""
+    num, delta = config.num_pix, config.delta_pix
+    return fd.FitData(image=np.zeros((num, num)),
+                      noise=np.ones((num, num)),
+                      delta_pix=delta)
+
+
+def test_point_source_entries_seed_image_plane():
+    """A LENSED point source becomes a LENSED_POSITION (image-plane) fit entry
+    seeded by the forward solve; UNLENSED stays a single on-sky point."""
+    cfg = lc.Config(num_pix=40, lenses=[lc.LensParams(theta_E=1.0)],
+                    point_sources=[lc.PointSourceParams(model="LENSED",
+                                                        center_x=0.1, center_y=-0.1)])
+    specs = [{"source_amp": (0.7, 0.02, 5.0, False)}]
+    models, fm, init, sigma, fixed, lower, upper, free, fixed_names = \
+        ft._point_source_entries(cfg, specs)
+    assert models == ["LENSED_POSITION"] and fm == [True]
+    ra_img = list(init[0]["ra_image"])
+    lc_ = lc
+    lm, kwl = lc_._get_lens_model(cfg.lenses, 1.5)
+    from lenstronomy.LensModel.Solver.lens_equation_solver import LensEquationSolver
+    x, y = LensEquationSolver(lm).findBrightImage(0.1, -0.1, kwl, numImages=4)
+    assert len(ra_img) == len(x) and len(ra_img) >= 2
+    # seeded image planes match the forward solve (order may differ)
+    exp = sorted(zip(np.round(x, 4), np.round(y, 4)))
+    got = sorted(zip(np.round(ra_img, 4), np.round(init[0]["dec_image"], 4)))
+    for (gx, gy), (ex, ey) in zip(got, exp):
+        assert gx == pytest.approx(ex, abs=1e-3)
+        assert gy == pytest.approx(ey, abs=1e-3)
+    assert "point0.source_amp" in free   # amplitude is linear/free by default
+    assert "point0.ra_image[0]" in free
+
+    # UNLENSED: single fixed on-sky point, point_amp entry
+    cfg2 = lc.Config(num_pix=40, point_sources=[lc.PointSourceParams(
+        model="UNLENSED", point_amp=0.5, center_x=0.3, center_y=-0.2)])
+    models2, fm2, init2, *_ = ft._point_source_entries(cfg2, [{}])
+    assert models2 == ["UNLENSED"] and fm2 == [False]
+    assert list(init2[0]["ra_image"]) == [0.3]
+    assert list(init2[0]["dec_image"]) == [-0.2]
+    assert init2[0]["point_amp"] == 0.5
+
+
+def test_point_source_roundtrip_recovers_source_plane():
+    """The image-plane fit result must map back to the app's source-plane model
+    such that re-rendering reproduces the fitted image positions."""
+    cfg = lc.Config(num_pix=40, lenses=[lc.LensParams(theta_E=1.0)],
+                    point_sources=[lc.PointSourceParams(model="LENSED",
+                                                        source_amp=0.7,
+                                                        center_x=0.1, center_y=-0.1)])
+    lm, kwl = lc._get_lens_model(cfg.lenses, 1.5)
+    kwargs_result = {
+        "kwargs_lens": kwl,
+        "kwargs_ps": [{"ra_image": [0.807, -0.607],
+                       "dec_image": [-0.807, 0.607],
+                       "source_amp": 0.71}],
+    }
+    out = ft.model_config_from_result(cfg, kwargs_result, 40)
+    ps = out.point_sources[0]
+    assert ps.model == "LENSED"
+    assert ps.center_x == pytest.approx(0.1, abs=2e-3)
+    assert ps.center_y == pytest.approx(-0.1, abs=2e-3)
+    assert ps.source_amp == pytest.approx(0.71, rel=1e-2)
+
+    # forward-render the recovered config -> same two images
+    lm2, kwl2 = lc._get_lens_model(out.lenses, ps.position_and_redshift(out)[2])
+    from lenstronomy.PointSource.point_source import PointSource
+    rt = PointSource(point_source_type_list=["SOURCE_POSITION"],
+                     lens_model=lm2, fixed_magnification_list=[True])
+    ra_i, dec_i, _ = rt.point_source_list([ps.lens_source_kwargs(out)[1]],
+                                          kwargs_lens=kwl2)
+    assert sorted(np.round(ra_i, 2)) == pytest.approx([-0.61, 0.81], abs=2e-2)
+    assert sorted(np.round(dec_i, 2)) == pytest.approx([-0.81, 0.61], abs=2e-2)
+
+
+def test_build_setup_includes_point_sources():
+    cfg = lc.Config(num_pix=20, lenses=[lc.LensParams()],
+                    point_sources=[lc.PointSourceParams(model="LENSED")])
+    kw_data, kw_model, kw_params, free_names, fixed_names = ft.build_setup(
+        cfg, _tiny_data(cfg), [], [], [], [{}])
+    assert kw_model["point_source_model_list"] == ["LENSED_POSITION"]
+    assert kw_model["fixed_magnification_list"] == [True]
+    assert "point_source_model" in kw_params
+    assert any(n.startswith("point0.") for n in free_names)
+
+    # no point sources -> keys absent, old behaviour unchanged
+    cfg_none = lc.Config(num_pix=20, lenses=[lc.LensParams()])
+    kw_data, kw_model, kw_params, *_ = ft.build_setup(
+        cfg_none, _tiny_data(cfg_none), [{"theta_E": (1.0, 0.1, 5.0, False)}],
+        [], [], [])
+    assert "point_source_model_list" not in kw_model
+    assert "point_source_model" not in kw_params

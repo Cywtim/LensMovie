@@ -238,3 +238,115 @@ def test_large_theta_E_critical_curve_is_found_in_full():
         # an on-axis SIS critical curve is a circle of radius θ_E
         assert np.isclose(r, te, rtol=0.25), \
             f"ring radius {r:.2f} != θ_E={te}"
+
+
+def test_lens_kwargs_new_models():
+    """NFW / SIS_TRUNCATED / SPEP build the right lenstronomy kwargs set."""
+    nfw = lc.lens_kwargs(lc.LensParams(model="NFW", Rs=1.4, alpha_Rs=0.7))
+    assert nfw["Rs"] == 1.4 and nfw["alpha_Rs"] == 0.7 and "theta_E" not in nfw
+    trunc = lc.lens_kwargs(
+        lc.LensParams(model="SIS_TRUNCATED", theta_E=1.2, r_trunc=3.0))
+    assert trunc["theta_E"] == 1.2 and trunc["r_trunc"] == 3.0
+    spep = lc.lens_kwargs(lc.LensParams(model="SPEP", gamma=2.1, e1=0.1))
+    assert spep["gamma"] == 2.1 and "e1" in spep
+
+
+def test_new_lens_models_render_with_critical_curves():
+    for m in ("NFW", "SIS_TRUNCATED", "SPEP"):
+        res = lc.compute(lc.Config(
+            lenses=[lc.LensParams(model=m)],
+            sources=[lc.SourceParams(center_x=0.0, center_y=0.0)],
+            num_pix=60))
+        assert res.ok, f"{m}: {res.error}"
+        assert res.cc_ra.size, f"{m} produced no critical curve"
+
+
+def test_hernquist_and_core_sersic_sources():
+    hk = lc.SourceParams(model="HERNQUIST", Rs=0.3).profile_kwargs()
+    assert hk["Rs"] == 0.3 and "R_sersic" not in hk and "sigma" not in hk
+    cs = lc.SourceParams(model="CORE_SERSIC", Rb=0.1, gamma=1.5).profile_kwargs()
+    assert cs["Rb"] == 0.1 and cs["gamma"] == 1.5 and "e1" in cs
+    assert lc.SourceParams(model="HERNQUIST", Rs=0.3).effective_radius() == 0.3
+    assert lc.SourceParams(model="CORE_SERSIC", R_sersic=0.25).effective_radius() == 0.25
+
+
+def test_source_card_offers_all_source_models_with_roundtrip():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from app.controls import SourcesPanel
+
+    panel = SourcesPanel()
+    card = panel._cards[0]
+    offered = [card._model_combo.itemText(i) for i in range(card._model_combo.count())]
+    assert offered == lc.SOURCE_MODELS
+    # picking each model must round-trip through the card without dropping
+    # model-specific params
+    src = lc.SourceParams(model="HERNQUIST", Rs=0.6)
+    card._model_combo.setCurrentText("HERNQUIST")
+    card.sliders["Rs"].set_value(0.6)
+    rt = card.to_params()
+    assert rt.model == "HERNQUIST" and rt.Rs == 0.6
+    panel.deleteLater()
+
+
+def test_point_source_spikes_coincide_with_solved_images():
+    """Forward LENSED point source (source plane) must put PSF spikes exactly on
+    the image positions that ``_solve_images`` finds (same solver)."""
+    from dataclasses import replace
+
+    cfg = lc.Config(
+        num_pix=100,
+        lenses=[lc.LensParams(theta_E=1.0)],
+        sources=[lc.SourceParams(center_x=0.1, center_y=-0.1, amp=0.0)],
+        point_sources=[lc.PointSourceParams(model="LENSED", source_amp=1.0,
+                                            center_x=0.1, center_y=-0.1)],
+    )
+    res = lc.compute(cfg)
+    sx, sy = res.image_positions[0][0], res.image_positions[0][1]
+    assert len(sx) >= 1
+    diff = res.image - lc.compute(replace(cfg, point_sources=[])).image
+    assert diff.max() > 0
+    ys, xs = np.unravel_index(diff.argmax(), diff.shape)
+    half = (cfg.num_pix - 1) / 2
+    ra_max = (xs - half) * cfg.delta_pix
+    dec_max = (ys - half) * cfg.delta_pix
+    dist2 = min((ra_max - x) ** 2 + (dec_max - y) ** 2 for x, y in zip(sx, sy))
+    assert dist2 < (2 * cfg.delta_pix) ** 2
+
+
+def test_unlensed_point_source_renders_at_image_plane_position():
+    """An UNLENSED point source (image plane, star-like) lands at its coords."""
+    cfg = lc.Config(
+        num_pix=60, lenses=[lc.LensParams()], sources=[],
+        point_sources=[lc.PointSourceParams(model="UNLENSED", point_amp=1.0,
+                                            center_x=0.7, center_y=0.3)],
+    )
+    img = lc.render_image(cfg)
+    assert img.max() > 0
+    ys, xs = np.unravel_index(img.argmax(), img.shape)
+    ra = (xs - (cfg.num_pix - 1) / 2) * cfg.delta_pix
+    dec = (ys - (cfg.num_pix - 1) / 2) * cfg.delta_pix
+    assert abs(ra - 0.7) < cfg.delta_pix and abs(dec - 0.3) < cfg.delta_pix
+
+
+def test_point_source_can_reference_a_source():
+    """ref_source >= 0 makes the point source reuse that source's centre + z."""
+    cfg = lc.Config(
+        sources=[lc.SourceParams(center_x=0.4, center_y=-0.2, redshift=2.2)],
+        point_sources=[lc.PointSourceParams(model="UNLENSED", ref_source=0)],
+    )
+    assert cfg.point_sources[0].position_and_redshift(cfg) == (0.4, -0.2, 2.2)
+
+
+def test_point_source_renders_with_delta_psf():
+    """A bare 1x1 (delta) PSF must not make point sources vanish or crash."""
+    cfg = lc.Config(
+        num_pix=40, lenses=[lc.LensParams()], sources=[],
+        point_sources=[lc.PointSourceParams(model="UNLENSED")],
+        psf_kernel=None,
+    )
+    img = lc.render_image(cfg)
+    assert img.max() > 0 and img.sum() > 0

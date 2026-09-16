@@ -4,7 +4,7 @@ An interactive Qt application that visualizes **gravitational lensing** with
 [lenstronomy](https://lenstronomy.readthedocs.io/), re-rendered in real time as
 you adjust parameters with sliders.
 
-![LensMovie interface](img/V_0.6.png)
+![LensMovie interface](img/lensmovie_dark.png)
 
 ## Features
 Single-window layout:
@@ -62,9 +62,10 @@ Single-window layout:
   | | col 1 | col 2 | col 3 |
   |---|---|---|---|
   | row 1 | Fermat potential | Lens image (+ image positions) | **Lenses** config |
-  | row 2 | Time delay | Critical curve + caustic | **Sources** config |
+  | row 2 | Time delay | Critical curve + caustic | **Sources / points** config |
 - **Config panels**:
-  - **Multiple lenses**: each with model selection (SIS / SIE / PEMD), own
+  - **Multiple lenses**: each with model selection (`SIS` / `SIE` / `SPEP` /
+    `PEMD` / `NFW` / `SIS_TRUNCATED`; PEMD only when `fastell4py` is present), own
     parameters (theta_E, shear, ellipticity, center) and **redshift**; add/remove.
   - **Deflector (lens galaxy) light per lens**: a light-model selector
     (`NONE` / `SERSIC_ELLIPSE` / `SERSIC` / `GAUSSIAN_ELLIPSE` / `GAUSSIAN`) with
@@ -74,9 +75,27 @@ Single-window layout:
     Its sliders are disabled while the model is `NONE`.
   - **Sky background**: a constant pedestal added to the model image (display strip).
   - **Multiple sources** — all **extended (resolved)** profiles, selectable per
-    source: `SERSIC_ELLIPSE`, `SERSIC`, `GAUSSIAN_ELLIPSE`, `GAUSSIAN`, each with
-    position, ellipticity, size (`R_sersic` / `sigma`), `n_sersic` and
+    source: `SERSIC_ELLIPSE`, `SERSIC`, `GAUSSIAN_ELLIPSE`, `GAUSSIAN`,
+    `HERNQUIST`, `CORE_SERSIC`, each with
+    position, ellipticity, size (`R_sersic` / `sigma` / `Rs`), `n_sersic` and
     **redshift**; add/remove.
+  - **Multiple point sources** (image-plane PSF spikes, configurable in their own
+    "Point sources" panel):
+    - `LENSED` — a **source-plane** point (lensed quasar/AGN): its multiple
+      images and magnification are *solved* from the source plane, amplitudes are
+      source-plane fluxes; drawn amber on the source plane in the 3D scene.
+    - `UNLENSED` — an image-plane star fixed on the sky (`point_amp`), magenta in
+      3D at mid-scene.
+    - Each entry can carry its own position/redshift or **attach to a source** —
+      the Sources card's **"point source"** checkbox gives a source an AGN at its
+      centre; the two controls stay in sync either way.
+    - Point-source amplitudes are **integral fluxes**, so they have separate,
+      much brighter slider ranges from extended profiles.
+  - **Point sources in the fit** — reverse of rendering: a fit works in the
+    **image plane** (`LENSED_POSITION`), seeded by a forward solve, while
+    rendering solves forward from the source plane (`SOURCE_POSITION`). After the
+    fit, the image-plane positions and flux are ray-shot back to the source plane
+    so re-rendering reproduces exactly what the fitter saw.
   - Physics via lenstronomy **multi-plane** lensing; one source-plane redshift is
     used as the reference for the 2D scalar fields.
   - **Every parameter is slider _and_ numeric input**: each slider has an editable

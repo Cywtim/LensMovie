@@ -45,7 +45,8 @@ from PyQt5.QtWidgets import (
 
 from . import lensing_calc as lc
 from .controller import LensMovieController
-from .controls import DataBar, DisplayBar, FitBar, LensesPanel, SourcesPanel
+from .controls import (DataBar, DisplayBar, FitBar, LensesPanel, PointSourcesPanel,
+                       SourcesPanel)
 from .plotting import CurvesCanvas, ExternalCanvas, FieldCanvas, ImageCanvas
 
 
@@ -206,6 +207,7 @@ class MainWindow(QMainWindow):
         # Config columns
         self.lenses_panel = LensesPanel()
         self.sources_panel = SourcesPanel()
+        self.point_sources_panel = PointSourcesPanel()
 
         # Column 0 pane: Fermat potential | Time delay
         pane_view0 = QWidget()
@@ -223,13 +225,14 @@ class MainWindow(QMainWindow):
         v1.addWidget(self.image_canvas, 1)
         v1.addWidget(self.curves_canvas, 1)
 
-        # Column 2 pane: Lenses | Sources configuration
+        # Column 2 pane: Lenses | Sources | Point sources configuration
         pane_config = QWidget()
         vc = QVBoxLayout(pane_config)
         vc.setContentsMargins(4, 2, 4, 4)
         vc.setSpacing(4)
         vc.addWidget(self.lenses_panel, 1)
         vc.addWidget(self.sources_panel, 1)
+        vc.addWidget(self.point_sources_panel, 1)
 
         self.col_split = QSplitter(Qt.Horizontal)
         self.col_split.setChildrenCollapsible(False)
@@ -291,6 +294,13 @@ class MainWindow(QMainWindow):
 
         self.lenses_panel.changed.connect(self._schedule)
         self.sources_panel.changed.connect(self._schedule)
+        self.point_sources_panel.changed.connect(self._schedule)
+        # Two-way point-source link: the Sources card "point" checkbox and the
+        # Point sources panel stay in sync (per-source AGN convenience).
+        self.sources_panel.point_source_toggled.connect(
+            self.point_sources_panel.set_attached)
+        self.point_sources_panel.attached_changed.connect(
+            self.sources_panel.set_point_checked)
         self.display_bar.changed.connect(self._schedule)
         # Toggling 3D shows/hides the bar and re-renders.
         self.display_bar._three_d.toggled.connect(self._on_3d_toggled)
@@ -547,7 +557,8 @@ class MainWindow(QMainWindow):
 
         self.controller.start_fit(
             config, data, self.lenses_panel.param_specs(),
-            self.sources_panel.param_specs(), settings,
+            self.sources_panel.param_specs(),
+            self.point_sources_panel.param_specs(), settings,
         )
         # Show the live model in the data panel while the fit runs (only when
         # previews are enabled).
@@ -612,15 +623,37 @@ class MainWindow(QMainWindow):
                 row = card.sliders.get(name)
                 if row is not None:
                     row.set_value(getattr(params, name, row.value()))
+        # Point sources: rebuild the cards when the count changed (a fit may add
+        # or drop one), otherwise just push the values back onto the sliders.
+        fitted = config.point_sources
+        if len(fitted) != len(self.point_sources_panel._cards):
+            for card in list(self.point_sources_panel._cards):
+                self.point_sources_panel._remove_card(card)
+            for ps in fitted:
+                self.point_sources_panel._add_point(point=ps)
+            self.point_sources_panel.update_sources(config.sources)
+        else:
+            for card, params in zip(self.point_sources_panel._cards, fitted):
+                for name in ("source_amp", "point_amp", "center_x", "center_y"):
+                    row = card.sliders.get(name)
+                    if row is not None:
+                        row.set_value(getattr(params, name, row.value()))
+                card.set_sources(config.sources, params.ref_source)
 
     def _schedule(self, *a):
         self._timer.start()
 
     def _build_config(self) -> lc.Config:
         d = self.display_bar.display()
+        sources = self.sources_panel.source_list()
+        # Keep the point-source anchor combos in step with the source list
+        # (rebuild on count change only; dragging a source needn't rebuild them).
+        if len(sources) != len(self.point_sources_panel._sources):
+            self.point_sources_panel.update_sources(sources)
         return lc.Config(
             lenses=self.lenses_panel.lens_list(),
-            sources=self.sources_panel.source_list(),
+            sources=sources,
+            point_sources=self.point_sources_panel.point_source_list(),
             num_pix=d["num_pix"],
             delta_pix=d["delta_pix"],
             psf_kernel=self.controller.current_psf_kernel(d),

@@ -20,11 +20,12 @@ class FitWorker(QThread):
     failed = pyqtSignal(str)
 
     def __init__(self, config, data, lens_specs, lens_light_specs, source_specs,
-                 n_particles=30, n_iterations=100, n_restarts=2,
-                 sigma_scale=4.0, polish=True,
+                 point_source_specs=None, n_particles=30, n_iterations=100,
+                 n_restarts=2, sigma_scale=4.0, polish=True,
                  preview_enabled=True, preview_interval=0.5, parent=None):
         super().__init__(parent)
-        self._args = (config, data, lens_specs, lens_light_specs, source_specs)
+        self._args = (config, data, lens_specs, lens_light_specs, source_specs,
+                      point_source_specs)
         # When previews are switched off, pass no callback at all so the fit loop
         # does not touch the renderer.
         self._preview_enabled = bool(preview_enabled)

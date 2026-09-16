@@ -288,6 +288,9 @@ class _LensCard(_EntryCard):
         self.add_slider("e1", "e1", -0.8, 0.8, lens.e1, 2)
         self.add_slider("e2", "e2", -0.8, 0.8, lens.e2, 2)
         self.add_slider("gamma", "γ", 1.0, 3.0, lens.gamma, 2)
+        self.add_slider("Rs", "Rs", 0.1, 5.0, lens.Rs, 2)
+        self.add_slider("alpha_Rs", "α_Rs", 0.05, 2.0, lens.alpha_Rs, 3)
+        self.add_slider("r_trunc", "r_trunc", 0.5, 10.0, lens.r_trunc, 2)
         self.add_slider("center_x", "x", -2.0, 2.0, lens.center_x, 2)
         self.add_slider("center_y", "y", -2.0, 2.0, lens.center_y, 2)
 
@@ -334,6 +337,9 @@ class _LensCard(_EntryCard):
             e1=s["e1"].value(),
             e2=s["e2"].value(),
             gamma=s["gamma"].value(),
+            Rs=s["Rs"].value(),
+            alpha_Rs=s["alpha_Rs"].value(),
+            r_trunc=s["r_trunc"].value(),
             redshift=self.redshift(),
             light_model=self.light_model(),
             light_amp=s["light_amp"].value(),
@@ -346,18 +352,29 @@ class _LensCard(_EntryCard):
 
 
 class _SourceCard(_EntryCard):
+    point_toggled = pyqtSignal(bool)
+
     def __init__(self, source: lc.SourceParams | None = None, parent=None):
         source = source or lc.SourceParams()
         super().__init__("Source", models=lc.SOURCE_MODELS, parent=parent)
         self._model_combo.setCurrentText(
             source.model if source.model in lc.SOURCE_MODELS else "SERSIC_ELLIPSE")
         self._z_spin.setValue(source.redshift)
+        self._pt_check = QCheckBox("point source (AGN / lensed point)")
+        self._pt_check.setToolTip(
+            "Give this source a lensed point source at its centre (an AGN).\n"
+            "It shows as a PSF spike at the multiple image positions.")
+        self._pt_check.toggled.connect(self.point_toggled)
+        self.form.addRow("point:", self._pt_check)
         self.add_slider("amp", "amp", 0.05, 5.0, source.amp, 2)
         self.add_slider("R_sersic", "R_sersic", 0.01, 1.0, source.R_sersic, 3)
         self.add_slider("sigma", "sigma", 0.01, 1.0, source.sigma, 3)
         self.add_slider("n_sersic", "n_sersic", 0.5, 8.0, source.n_sersic, 2)
         self.add_slider("e1", "e1", -0.8, 0.8, source.e1, 2)
         self.add_slider("e2", "e2", -0.8, 0.8, source.e2, 2)
+        self.add_slider("Rs", "Rs", 0.02, 1.5, source.Rs, 3)
+        self.add_slider("Rb", "Rb", 0.02, 1.5, source.Rb, 3)
+        self.add_slider("gamma", "γ", 0.1, 4.0, source.gamma, 2)
         self.add_slider("center_x", "x", -2.0, 2.0, source.center_x, 2)
         self.add_slider("center_y", "y", -2.0, 2.0, source.center_y, 2)
 
@@ -371,9 +388,105 @@ class _SourceCard(_EntryCard):
             sigma=s["sigma"].value(),
             e1=s["e1"].value(),
             e2=s["e2"].value(),
+            Rs=s["Rs"].value(),
+            Rb=s["Rb"].value(),
+            gamma=s["gamma"].value(),
             center_x=s["center_x"].value(),
             center_y=s["center_y"].value(),
             redshift=self.redshift(),
+        )
+
+    def set_point_checked(self, on: bool, *, quiet: bool = False):
+        """Set the point-source checkbox (from the point-source panel), without
+        re-triggering ``point_toggled`` when ``quiet`` (the other panel drove it)."""
+        if quiet:
+            self._pt_check.blockSignals(True)
+        self._pt_check.setChecked(on)
+        if quiet:
+            self._pt_check.blockSignals(False)
+
+
+class _PointSourceCard(_EntryCard):
+    """One point source.
+
+    ``LENSED``   — a source-plane point that is lensed by the same lens as the
+                   extended sources (its images + magnification are solved);
+                   amplitude is a *source-plane* flux (source_amp).
+    ``UNLENSED`` — an image-plane star fixed at an on-sky position (point_amp).
+    An entry can either carry its own position/redshift or *attach to a source*
+    (e.g. an AGN on top of a host galaxy), sharing its centre and redshift.
+    """
+
+    ref_changed = pyqtSignal(int)      # this entry's (new) ref_source index
+
+    def __init__(self, point: lc.PointSourceParams | None = None,
+                 sources: list | None = None, parent=None):
+        point = point or lc.PointSourceParams()
+        super().__init__("Point source", models=["LENSED", "UNLENSED"],
+                         parent=parent)
+        self._model_combo.setCurrentText(
+            point.model if point.model in ("LENSED", "UNLENSED") else "LENSED")
+        self._z_spin.setValue(point.redshift)
+        self._ref_source = point.ref_source
+
+        # anchor: own position, or reuse a source's centre + redshift
+        self._anchor_combo = QComboBox()
+        self._anchor_combo.setToolTip("own position, or ride on a source's centre")
+        self._anchor_combo.currentIndexChanged.connect(self._on_anchor)
+        self.form.addRow("anchor:", self._anchor_combo)
+
+        self.add_slider("source_amp", "Flux", 0.02, 5.0, point.source_amp, 3)
+        self.add_slider("point_amp", "On-sky", 0.02, 5.0, point.point_amp, 3)
+        self.add_slider("center_x", "x", -2.0, 2.0, point.center_x, 2)
+        self.add_slider("center_y", "y", -2.0, 2.0, point.center_y, 2)
+
+        self.set_sources(sources or [], point.ref_source)
+        self._sync_model()
+        self._model_combo.currentTextChanged.connect(self._sync_model)
+
+    # ------------------------------------------------------------- anchoring
+    def set_sources(self, sources: list, ref_source: int = -1):
+        """Rebuild the anchor options from the current source list and re-apply
+        ``ref_source`` (out-of-range values fall back to 'own')."""
+        self._ref_source = ref_source if 0 <= ref_source < len(sources) else -1
+        self._anchor_combo.blockSignals(True)
+        self._anchor_combo.clear()
+        self._anchor_combo.addItem("own position")
+        for i in range(len(sources)):
+            self._anchor_combo.addItem(f"attach to source {i}")
+        self._anchor_combo.blockSignals(False)
+        self._anchor_combo.setCurrentIndex(self._ref_source + 1)
+        self._apply_anchor()
+
+    def _on_anchor(self, index):
+        old = self._ref_source
+        self._ref_source = index - 1 if index >= 1 else -1
+        self._apply_anchor()
+        self.changed.emit()
+        if old != self._ref_source:
+            self.ref_changed.emit(self._ref_source)
+
+    def _apply_anchor(self):
+        attached = self._ref_source >= 0
+        for name in ("center_x", "center_y"):
+            self.sliders[name].setEnabled(not attached)
+        self._z_spin.setEnabled(not attached)
+
+    def _sync_model(self, *a):
+        lensed = self._model_combo.currentText() == "LENSED"
+        self.sliders["source_amp"].setEnabled(lensed)
+        self.sliders["point_amp"].setEnabled(not lensed)
+
+    def to_params(self) -> lc.PointSourceParams:
+        s = self.sliders
+        return lc.PointSourceParams(
+            model=self.model(),
+            source_amp=s["source_amp"].value(),
+            point_amp=s["point_amp"].value(),
+            center_x=s["center_x"].value(),
+            center_y=s["center_y"].value(),
+            redshift=self.redshift(),
+            ref_source=self._ref_source,
         )
 
 
@@ -454,6 +567,8 @@ class LensesPanel(_CardListPanel):
 class SourcesPanel(_CardListPanel):
     """Right hand column (bottom): the list of sources."""
 
+    point_source_toggled = pyqtSignal(int, bool)   # (source index, now attached?)
+
     def __init__(self, parent=None):
         super().__init__("Sources", parent=parent)
         btn = QPushButton("+ Add source")
@@ -462,10 +577,106 @@ class SourcesPanel(_CardListPanel):
         self._add_source()
 
     def _add_source(self):
-        self._add_card(_SourceCard())
+        card = _SourceCard()
+        self._add_card(card)
+        card.point_toggled.connect(
+            lambda on, c=card: self.point_source_toggled.emit(
+                self._cards.index(c), on))
 
     def source_list(self):
         return [c.to_params() for c in self._cards]
+
+    def set_point_checked(self, source_index: int, on: bool):
+        """Mirror the point-source panel's attachment state onto the checkbox."""
+        if 0 <= source_index < len(self._cards):
+            self._cards[source_index].set_point_checked(on, quiet=True)
+
+
+class PointSourcesPanel(_CardListPanel):
+    """Point sources: lensed (source-plane) points and unlensed image-plane stars.
+
+    Each entry can attach to a source (AGN on a host galaxy) or carry its own
+    position.  ``attached_changed`` lets the Sources panel mirror which source
+    has a point source.
+    """
+
+    attached_changed = pyqtSignal(int, bool)   # (source index, now attached?)
+
+    def __init__(self, parent=None):
+        super().__init__("Point sources", parent=parent)
+        btn = QPushButton("+ Add point source")
+        btn.clicked.connect(self._add_point)
+        self._root.insertWidget(self._root.count() - 1, btn)
+        self._sources: list = []
+        self._attached_flags: list[bool] = []
+        # starts EMPTY: no point source is a valid (and default) config.
+
+    def _add_point(self, point: lc.PointSourceParams | None = None,
+                   ref_source: int = -1):
+        card = _PointSourceCard(point=point, sources=self._sources)
+        if ref_source >= 0:
+            card.set_sources(self._sources, ref_source)
+        card.ref_changed.connect(self._on_ref_changed)
+        self._add_card(card)
+        self._sync_attached_flags()
+        return card
+
+    def _on_ref_changed(self, ref):
+        self.changed.emit()
+        self._sync_attached_flags()
+
+    def _remove_card(self, card):
+        # A point source is optional — unlike lenses/sources, allow an empty list.
+        if card in self._cards:
+            self._cards.remove(card)
+            card.setParent(None)
+            card.deleteLater()
+            self.changed.emit()
+            self._sync_attached_flags()
+
+    def point_source_list(self):
+        return [c.to_params() for c in self._cards]
+
+    def update_sources(self, sources: list):
+        """Refresh the anchor options when the source list changes."""
+        self._sources = list(sources)
+        for card in self._cards:
+            card.set_sources(self._sources, card._ref_source)
+        self._attached_flags = [False] * len(self._sources)
+        for c in self._cards:
+            r = c._ref_source
+            if 0 <= r < len(self._attached_flags):
+                self._attached_flags[r] = True
+
+    def set_attached(self, source_index: int, enabled: bool):
+        """Attach a point source to (or detach it from) a source index.
+
+        Driven by the Sources panel's "point" checkbox.
+        """
+        if not (0 <= source_index < len(self._sources)):
+            return
+        if enabled:
+            if not any(c._ref_source == source_index for c in self._cards):
+                self._add_point(ref_source=source_index)
+        else:
+            for c in list(self._cards):
+                if c._ref_source == source_index:
+                    c.set_sources(self._sources, -1)      # free, keep the card
+            self._sync_attached_flags()
+
+    def _sync_attached_flags(self):
+        """Recompute per-source attachment and emit changes (also mirrors onto
+        the Sources panel's checkboxes)."""
+        n = len(self._sources)
+        desired = [False] * n
+        for c in self._cards:
+            r = c._ref_source
+            if 0 <= r < n:
+                desired[r] = True
+        for i in range(n):
+            if desired[i] != self._attached_flags[i]:
+                self._attached_flags[i] = desired[i]
+                self.attached_changed.emit(i, desired[i])
 
 
 class DataBar(QWidget):

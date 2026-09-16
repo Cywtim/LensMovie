@@ -109,6 +109,7 @@ class Scene3D:
         self._rays = []
         self._blobs = []
         self._markers = None
+        self._point_markers = None
         self._add_axes()
         self.update_scene(lc.Config(), _empty_result())
 
@@ -146,7 +147,8 @@ class Scene3D:
     # ------------------------------------------------------------------ update
     def update_scene(self, config: lc.Config, result: lc.SimResult):
         """Rebuild the edge-on scene from the current config and result."""
-        for v in (self._disks, self._rays, self._markers, self._blobs):
+        for v in (self._disks, self._rays, self._markers, self._blobs,
+                  self._point_markers):
             items = v if isinstance(v, list) else [v]
             for item in items:
                 if item is not None:
@@ -155,6 +157,7 @@ class Scene3D:
                     except Exception:
                         pass
         self._disks, self._rays, self._markers, self._blobs = [], [], None, []
+        self._point_markers = None
 
         z_max = max([l.redshift for l in config.lenses] + [0.3])
 
@@ -166,6 +169,7 @@ class Scene3D:
         for si, source in enumerate(config.sources):
             self._blobs.append(self._make_source_blob(source, si))
         self._add_rays(config)
+        self._add_point_markers(config)
         # NB: the camera centre is deliberately NOT reset here, so a pan (middle-
         # drag / SHIFT+LMB) survives parameter changes instead of snapping back.
         self.canvas.update()
@@ -259,7 +263,12 @@ class Scene3D:
             dy = lens.center_y - ys
             dz = lens.center_x - zs
             dist = max(float(np.hypot(dy, dz)), 1e-3)
-            bend = min(abs(lens.theta_E), 1.6)
+            # Bend scale per model: an NFW halo's deflection is set by alpha_Rs,
+            # all isothermal/power-law profiles by theta_E.
+            if lens.model == "NFW":
+                bend = min(abs(lens.alpha_Rs), 1.6)
+            else:
+                bend = min(abs(lens.theta_E), 1.6)
             ys2 = ys + (dy / dist) * bend
             zs2 = zs + (dz / dist) * bend
             pts.append([x_lens + dw, ys, zs])        # arrive (before bend)
@@ -294,6 +303,29 @@ class Scene3D:
                 pos=np.array([m[0] for m in markers]),
                 face_color=np.array([m[1] for m in markers], dtype=np.float32),
                 edge_color=(0.15, 0.15, 0.15, 1), size=6, parent=self.view.scene)
+
+    def _add_point_markers(self, config):
+        """Bright point-source markers.
+
+        A LENSED point source sits on the source plane (it is lensed into
+        multiple images like the extended source); an UNLENSED star lives in the
+        image plane, drawn mid-scene at x=0 (unaffected by the lens).
+        """
+        pts, colors = [], []
+        for point in config.point_sources:
+            ra, dec, _ = point.position_and_redshift(config)
+            if point.model == "UNLENSED":
+                pts.append([0.0, dec, ra])            # image plane, mid-scene
+                colors.append((1.0, 0.55, 1.0, 1.0))  # magenta star
+            else:
+                pts.append([self._L, dec, ra])        # source plane
+                colors.append((1.0, 0.9, 0.3, 1.0))   # amber
+        if pts:
+            self._point_markers = visuals.Markers(
+                pos=np.array(pts, dtype=np.float32),
+                face_color=np.array(colors, dtype=np.float32),
+                edge_color=(0.1, 0.1, 0.1, 1), size=14,
+                parent=self.view.scene)
 
     @property
     def native(self):

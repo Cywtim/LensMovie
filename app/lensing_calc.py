@@ -39,6 +39,13 @@ class LensParams:
     e2: float = 0.0
     gamma: float = 2.0          # PEMD power-law index
 
+    # NFW dark-matter halo: Rs = scale radius (arcsec); alpha_Rs = deflection
+    # strength in units of Rs at the scale radius. theta_E is unused by NFW.
+    Rs: float = 1.0
+    alpha_Rs: float = 0.5
+    # Truncated isothermal (SIS_TRUNCATED): truncation radius (arcsec).
+    r_trunc: float = 5.0
+
     # --- Deflector (lens galaxy) light -------------------------------------
     # Light emitted by the lens galaxy itself. It sits in the image plane and is
     # NOT lensed. Without it, real observations would have the deflector's light
@@ -83,7 +90,10 @@ class LensParams:
 # reproduce the data and a fit will stall above the noise floor.
 SUPERSAMPLING_FACTOR = 3
 
-SOURCE_MODELS = ["SERSIC_ELLIPSE", "SERSIC", "GAUSSIAN_ELLIPSE", "GAUSSIAN"]
+SOURCE_MODELS = [
+    "SERSIC_ELLIPSE", "SERSIC", "GAUSSIAN_ELLIPSE", "GAUSSIAN",
+    "HERNQUIST", "CORE_SERSIC",
+]
 
 # Deflector-galaxy light profiles (image plane, unlensed). "NONE" means the lens
 # galaxy emits no light in the model.
@@ -104,6 +114,12 @@ class SourceParams:
     center_y: float = -0.1
     redshift: float = 1.5
     model: str = "SERSIC_ELLIPSE"
+    # Hernquist stellar-halo profile: Rs = scale radius (arcsec).
+    Rs: float = 0.5
+    # Core-Sersic (bulge with flat core): Rb = break radius (arcsec),
+    # gamma = inner power-law slope.
+    Rb: float = 0.2
+    gamma: float = 2.0
 
     def profile_kwargs(self) -> dict:
         """Build the lenstronomy kwargs dict for this source's light profile."""
@@ -119,6 +135,17 @@ class SourceParams:
             if model == "SERSIC_ELLIPSE":
                 common["e1"] = float(self.e1)
                 common["e2"] = float(self.e2)
+        elif model == "CORE_SERSIC":
+            common.update(
+                R_sersic=float(self.R_sersic),
+                Rb=float(self.Rb),
+                n_sersic=float(self.n_sersic),
+                gamma=float(self.gamma),
+                e1=float(self.e1),
+                e2=float(self.e2),
+            )
+        elif model == "HERNQUIST":
+            common["Rs"] = float(self.Rs)
         else:  # GAUSSIAN / GAUSSIAN_ELLIPSE
             common["sigma"] = float(self.sigma)
             if model == "GAUSSIAN_ELLIPSE":
@@ -128,9 +155,51 @@ class SourceParams:
 
     def effective_radius(self) -> float:
         """A representative angular size used for the 3D source blob."""
-        if self.model.startswith("SERSIC"):
+        if self.model == "HERNQUIST":
+            return float(max(self.Rs, 1e-3))
+        if self.model.startswith("SERSIC") or self.model == "CORE_SERSIC":
             return float(max(self.R_sersic, 1e-3))
         return float(max(self.sigma, 1e-3))
+
+
+@dataclass
+class PointSourceParams:
+    """A point (unresolved) source: lensed, or an unlensed star in the image plane.
+
+    Forward rendering and fitting deliberately use **different** lenstronomy
+    parameterisations (mirroring lenstronomy's own split):
+      * forward is source-plane based  -> SOURCE_POSITION  (ra_source, ...),
+        images + magnification solved from the lens equation;
+      * fitting is image-plane based   -> LENSED_POSITION  (ra_image, ...),
+        the observed image positions are the free parameters.
+    ``model_config_from_result`` bridges the two with ray-shooting.
+    """
+
+    model: str = "LENSED"       # LENSED (source plane) | UNLENSED (image plane)
+    source_amp: float = 1.0     # intrinsic flux (LENSED); on-sky flux = |mu| * amp
+    point_amp: float = 1.0      # on-sky flux (UNLENSED star)
+    center_x: float = 0.1       # LENSED: source-plane x, UNLENSED: image-plane x
+    center_y: float = -0.1
+    redshift: float = 1.5
+    ref_source: int = -1        # >= 0: reuse source[idx] centre + redshift (AGN)
+
+    def position_and_redshift(self, config: "Config"):
+        """Resolve (ra, dec, redshift), following a source reference if set."""
+        if 0 <= self.ref_source < len(config.sources):
+            src = config.sources[self.ref_source]
+            return (float(src.center_x), float(src.center_y), float(src.redshift))
+        return (float(self.center_x), float(self.center_y), float(self.redshift))
+
+    def lens_source_kwargs(self, config: "Config") -> tuple[str, dict, bool]:
+        """(lenstronomy point-source type, kwargs_ps dict, fixed_magnification)."""
+        ra, dec, _ = self.position_and_redshift(config)
+        if self.model == "UNLENSED":
+            return ("UNLENSED",
+                    {"ra_image": [ra], "dec_image": [dec],
+                     "point_amp": [float(self.point_amp)]}, False)
+        return ("SOURCE_POSITION",
+                {"ra_source": ra, "dec_source": dec,
+                 "source_amp": float(self.source_amp)}, True)
 
 
 def gaussian_psf_kernel(fwhm_arcsec: float, delta_pix: float, size: int = 0) -> np.ndarray:
@@ -159,6 +228,7 @@ class Config:
 
     lenses: list[LensParams] = field(default_factory=lambda: [LensParams()])
     sources: list[SourceParams] = field(default_factory=lambda: [SourceParams()])
+    point_sources: list[PointSourceParams] = field(default_factory=list)
     num_pix: int = 150
     delta_pix: float = 0.05
     # Convolution kernel applied to the model image. The default 1x1 kernel is a
@@ -196,6 +266,8 @@ _MODEL_PROFILE = {
     "SIE": ("SIE", ["theta_E", "e1", "e2"]),   # elliptical isothermal (no gamma)
     "SPEP": ("SPEP", ["theta_E", "gamma", "e1", "e2"]),
     "PEMD": ("PEMD", ["theta_E", "gamma", "e1", "e2"]),
+    "NFW": ("NFW", ["Rs", "alpha_Rs"]),        # dark-matter halo
+    "SIS_TRUNCATED": ("SIS_TRUNCATED", ["theta_E", "r_trunc"]),
 }
 
 
@@ -204,9 +276,9 @@ def available_lens_models() -> list:
 
     ``PEMD`` needs the optional Fortran extension ``fastell4py``; it is only
     offered when that import succeeds, so the UI never presents a model that is
-    guaranteed to fail.
+    guaranteed to fail.  The rest are pure-Python lenstronomy profiles.
     """
-    models = ["SIS", "SIE"]
+    models = ["SIS", "SIE", "SPEP", "NFW", "SIS_TRUNCATED"]
     try:
         from lenstronomy.LensModel.Profiles.pemd import PEMD  # noqa: F401
 
@@ -218,16 +290,24 @@ def available_lens_models() -> list:
 
 
 # Every model this app knows about; the UI offers available_lens_models().
-LENS_MODELS = ["SIS", "SIE", "PEMD"]
+LENS_MODELS = ["SIS", "SIE", "SPEP", "PEMD", "NFW", "SIS_TRUNCATED"]
 
 
 def lens_kwargs(lens: LensParams) -> dict:
     """Build a single lenstronomy kwargs dict for one lens profile (no shear)."""
-    base = {
-        "theta_E": float(lens.theta_E),
+    center = {
         "center_x": float(lens.center_x),
         "center_y": float(lens.center_y),
     }
+    if lens.model == "NFW":
+        return {"Rs": float(lens.Rs), "alpha_Rs": float(lens.alpha_Rs), **center}
+    if lens.model == "SIS_TRUNCATED":
+        return {
+            "theta_E": float(lens.theta_E),
+            "r_trunc": float(lens.r_trunc),
+            **center,
+        }
+    base = {"theta_E": float(lens.theta_E), **center}
     if lens.model == "SIS":
         return base
     base["e1"] = float(lens.e1)
@@ -274,7 +354,8 @@ def _get_lens_model(lenses: list[LensParams], z_source: float):
     """Build (and cache) the multi-plane LensModel for a given z_source."""
     key = (
         tuple((l.model, l.redshift, l.theta_E, l.gamma1, l.gamma2,
-               l.center_x, l.center_y, l.e1, l.e2, l.gamma) for l in lenses),
+               l.center_x, l.center_y, l.e1, l.e2, l.gamma,
+               l.Rs, l.alpha_Rs, l.r_trunc) for l in lenses),
         z_source,
     )
     cache = _lens_model_cache
@@ -317,7 +398,8 @@ def _fermat_potential(lens_model, kwargs_lens, grid_x, grid_y, ref_x, ref_y):
 
 
 def render_image(config: Config) -> np.ndarray:
-    """Render ONLY the model image (lensed sources + deflector light + sky).
+    """Render ONLY the model image (lensed sources + point sources + deflector
+    light + sky).
 
     ``compute`` additionally evaluates the Fermat/time-delay fields, the critical
     curve, the caustic and the image positions, which is ~30x more expensive. A
@@ -333,6 +415,9 @@ def render_image(config: Config) -> np.ndarray:
             lens_model, kwargs_lens, source, num_pix, delta_pix,
             psf_kernel=config.psf_kernel,
         )
+    # Point sources: PSF-convolved spikes (lensed or unlensed).
+    image += _render_point_sources(config, num_pix, delta_pix,
+                                   psf_kernel=config.psf_kernel)
     # Deflector light: image plane, unlensed, added once.
     image += _render_lens_light(config, num_pix, delta_pix)
     if config.sky_amp:
@@ -484,12 +569,16 @@ def _normalised_kernel(psf_kernel):
     return np.array([[1.0]])
 
 
-def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix,
-                         psf_kernel=None):
+def _make_image_model(lens_model, num_pix, delta_pix, psf_kernel,
+                      source_light_model=None, point_source_class=None):
+    """One ImageModel on the model grid (same convention as the data grids).
+
+    ``source_light_model`` / ``point_source_class`` are optional lenstronomy
+    class instances (only what is rendered is supplied).
+    """
     from lenstronomy.Data.imaging_data import ImageData
     from lenstronomy.Data.psf import PSF
     from lenstronomy.ImSim.image_model import ImageModel
-    from lenstronomy.LightModel.light_model import LightModel
     from lenstronomy.Util import util
 
     # Use lenstronomy's own grid convention so the sky grid is centred on the
@@ -498,28 +587,83 @@ def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix,
     # ra/dec origin of pixel (0, 0). Getting this wrong puts the lens outside
     # the field of view and the image no longer looks lensed.
     x_grid, y_grid = util.make_grid(num_pix, delta_pix)
-    kwargs_data = {
-        "ra_at_xy_0": x_grid[0],
-        "dec_at_xy_0": y_grid[0],
-        "transform_pix2angle": np.array([[delta_pix, 0], [0, delta_pix]]),
-        "image_data": np.zeros((num_pix, num_pix)),
-    }
-    data = ImageData(**kwargs_data)
+    data = ImageData(
+        ra_at_xy_0=x_grid[0], dec_at_xy_0=y_grid[0],
+        transform_pix2angle=np.array([[delta_pix, 0], [0, delta_pix]]),
+        image_data=np.zeros((num_pix, num_pix)),
+    )
     # Convolve with the supplied PSF kernel; a 1x1 kernel means no blurring.
     # The kernel is normalised so it cannot rescale the image brightness: a PSF
     # must integrate to unity.
     psf = PSF(psf_type="PIXEL", pixel_size=delta_pix,
               kernel_point_source=_normalised_kernel(psf_kernel))
-    light_model = LightModel(light_model_list=[_valid_source_model(source.model)])
-    kwargs_light = [source.profile_kwargs()]
-    image_model = ImageModel(
-        data_class=data,
-        psf_class=psf,
-        lens_model_class=lens_model,
-        source_model_class=light_model,
+    return ImageModel(
+        data_class=data, psf_class=psf, lens_model_class=lens_model,
+        source_model_class=source_light_model,
+        point_source_class=point_source_class,
         kwargs_numerics={"supersampling_factor": SUPERSAMPLING_FACTOR},
     )
+
+
+def _render_source_image(lens_model, kwargs_lens, source, num_pix, delta_pix,
+                         psf_kernel=None):
+    from lenstronomy.LightModel.light_model import LightModel
+
+    light_model = LightModel(light_model_list=[_valid_source_model(source.model)])
+    kwargs_light = [source.profile_kwargs()]
+    image_model = _make_image_model(
+        lens_model, num_pix, delta_pix, psf_kernel,
+        source_light_model=light_model,
+    )
     return np.asarray(image_model.image(kwargs_lens, kwargs_light), dtype=float)
+
+
+def _point_source_kernel(psf_kernel):
+    """PSF kernel for point-source rendering.
+
+    A bare 1x1 delta breaks lenstronomy's point-source placement: the sub-pixel
+    ``ndimage.shift`` of a single-pixel kernel drops all its flux (and
+    supersampling it even raises).  Promote it to a 3x3 kernel with only the
+    centre set — still a pixel-delta (no blur), but numerically well-behaved.
+    """
+    kernel = _normalised_kernel(psf_kernel)
+    if kernel.shape == (1, 1):
+        out = np.zeros((3, 3), dtype=float)
+        out[1, 1] = 1.0
+        return out
+    return kernel
+
+
+def _render_point_sources(config, num_pix, delta_pix, psf_kernel=None):
+    """Render the point sources: PSF-convolved spikes at the lensed image
+    positions (LENSED, images solved from the source plane) or at a fixed
+    image-plane position (UNLENSED star). Additive with the extended sources."""
+    if not config.point_sources:
+        return np.zeros((num_pix, num_pix))
+
+    from lenstronomy.PointSource.point_source import PointSource
+
+    pkernel = _point_source_kernel(psf_kernel)
+    total = np.zeros((num_pix, num_pix))
+    for point in config.point_sources:
+        ptype, kw_ps, fixed_mag = point.lens_source_kwargs(config)
+        z = point.position_and_redshift(config)[2]
+        lens_model, kwargs_lens = _get_lens_model(config.lenses, z)
+        point_source = PointSource(
+            point_source_type_list=[ptype],
+            lens_model=lens_model,
+            fixed_magnification_list=[fixed_mag],
+        )
+        image_model = _make_image_model(
+            lens_model, num_pix, delta_pix, pkernel,
+            point_source_class=point_source,
+        )
+        total += np.asarray(
+            image_model.image(kwargs_lens, kwargs_ps=[kw_ps],
+                              source_add=False, lens_light_add=False),
+            dtype=float,
+        )
+    return total
 
 
 def _solve_images(lens_model, kwargs_lens, source, color_idx=0):

@@ -145,13 +145,13 @@ class LensMovieController(QObject):
         return self._fit_worker
 
     def start_fit(self, config: lc.Config, data, lens_specs, source_specs,
-                  settings: dict) -> bool:
+                  point_source_specs, settings: dict) -> bool:
         """Launch a PSO fit on a background thread.
 
-        ``lens_specs`` / ``source_specs`` are the per-entry
-        ``{name: (value, lower, upper, fixed)}`` dicts that describe which
-        parameters are free.  ``settings`` comes from the fit strip.  Returns
-        ``False`` (and does nothing) if a fit is already running.
+        ``lens_specs`` / ``source_specs`` / ``point_source_specs`` are the
+        per-entry ``{name: (value, lower, upper, fixed)}`` dicts that describe
+        which parameters are free.  ``settings`` comes from the fit strip.
+        Returns ``False`` (and does nothing) if a fit is already running.
         """
         from .fit_worker import FitWorker
 
@@ -161,7 +161,7 @@ class LensMovieController(QObject):
         # Deflector-light specs live on the same cards as the lens itself.
         worker = FitWorker(
             config, data, lens_specs, lens_specs, source_specs,
-            parent=self, **settings,
+            point_source_specs, parent=self, **settings,
         )
         self._fit_worker = worker
         worker.progressed.connect(self.fitStatus)

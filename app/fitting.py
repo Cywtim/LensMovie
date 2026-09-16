@@ -187,12 +187,97 @@ def _source_entries(config: lc.Config, src_infos: list):
     return model_list, init, sigma, fixed, lower, upper, free_names, fixed_names
 
 
+def _point_source_entries(config: lc.Config, ps_infos: list):
+    """Build point-source fit bookkeeping.
+
+    The *fit* works in the image plane (LENSED_POSITION / UNLENSED), because the
+    observations are the image positions — the reverse of forward rendering,
+    which uses SOURCE_POSITION and solves the images from the source plane.
+    Image positions are seeded by a forward lens-equation solve of the current
+    config and are always free; amplitudes (flux) are linear-parity parameters
+    solved by lenstronomy's linear solver unless locked by the UI.
+    """
+    model_list = []
+    fixed_mag = []
+    init, sigma, fixed, lower, upper = [], [], [], [], []
+    free_names, fixed_names = [], []
+
+    for i, point in enumerate(config.point_sources):
+        infos = _to_param_info(ps_infos[i] if i < len(ps_infos) else {})
+        ra, dec, z = point.position_and_redshift(config)
+
+        if point.model == "UNLENSED":
+            ra_image, dec_image = [ra], [dec]
+            amp_name, amp_val = "point_amp", point.point_amp
+            num = 1
+        else:      # LENSED -> observed as an image-plane point source
+            ra_image, dec_image = _seed_image_positions(config, ra, dec, z)
+            amp_name, amp_val = "source_amp", point.source_amp
+            num = len(ra_image)
+
+        # Image positions are always sampled (with a generous search window).
+        init_kw = {"ra_image": list(ra_image), "dec_image": list(dec_image)}
+        sigma_kw = {"ra_image": [0.1] * num, "dec_image": [0.1] * num}
+        lower_kw = {"ra_image": [-8.0] * num, "dec_image": [-8.0] * num}
+        upper_kw = {"ra_image": [8.0] * num, "dec_image": [8.0] * num}
+        fixed_kw = {}
+
+        amp_info = infos.get(amp_name)
+        if amp_info is not None and amp_info.fixed:
+            fixed_kw[amp_name] = float(amp_val)
+            fixed_names.append(f"point{i}.{amp_name}")
+        else:
+            init_kw[amp_name] = float(amp_val)
+            if amp_info is not None:
+                sigma_kw[amp_name] = max(
+                    (amp_info.upper - amp_info.lower) / 10.0, 1e-4)
+                lower_kw[amp_name], upper_kw[amp_name] = amp_info.lower, amp_info.upper
+            else:
+                sigma_kw[amp_name], lower_kw[amp_name], upper_kw[amp_name] = 0.1, 0.0, 100.0
+            free_names.append(f"point{i}.{amp_name}")
+
+        model_list.append("UNLENSED" if point.model == "UNLENSED" else "LENSED_POSITION")
+        fixed_mag.append(False if point.model == "UNLENSED" else True)
+        init.append(init_kw); sigma.append(sigma_kw); fixed.append(fixed_kw)
+        lower.append(lower_kw); upper.append(upper_kw)
+        for k in range(num):
+            free_names.append(f"point{i}.ra_image[{k}]")
+            free_names.append(f"point{i}.dec_image[{k}]")
+
+    return (model_list, fixed_mag, init, sigma, fixed, lower, upper,
+            free_names, fixed_names)
+
+
+def _seed_image_positions(config, ra, dec, z, max_images=4, fallback=True):
+    """Solve the current lens for the images of a source-plane point.
+
+    Used to initialise a LENSED_POSITION fit from the forward model.
+    """
+    try:
+        from lenstronomy.LensModel.Solver.lens_equation_solver import \
+            LensEquationSolver
+
+        lens_model, kwargs_lens = lc._get_lens_model(config.lenses, z)
+        solver = LensEquationSolver(lens_model)
+        x, y = solver.findBrightImage(ra, dec, kwargs_lens, numImages=max_images)
+        x = np.asarray(x, dtype=float).reshape(-1)
+        y = np.asarray(y, dtype=float).reshape(-1)
+        if len(x) and np.all(np.isfinite(x)) and np.all(np.isfinite(y)):
+            return list(x), list(y)
+    except Exception:
+        pass
+    if fallback:
+        return [ra], [dec]      # unlensed fallback: a single seed at the source
+    return [], []
+
+
 def build_setup(
     config: lc.Config,
     data: fd.FitData,
     lens_specs: list,
     lens_light_specs: list,
     source_specs: list,
+    point_source_specs: list = None,
     ref_source_index: int = -1,
 ):
     """Build ``(kwargs_data_joint, kwargs_model, kwargs_params, free, fixed)``."""
@@ -216,8 +301,13 @@ def build_setup(
     (src_models, sa, sb, sc, sd, se,
      src_free, src_fixed) = _source_entries(config, src_infos)
 
-    free_names = lens_free + ll_free + src_free
-    fixed_names = lens_fixed + ll_fixed + src_fixed
+    if point_source_specs is None:
+        point_source_specs = []
+    (ps_models, ps_fixed_mag, pa, pb, pc, pd, pe,
+     ps_free, ps_fixed) = _point_source_entries(config, point_source_specs)
+
+    free_names = lens_free + ll_free + src_free + ps_free
+    fixed_names = lens_fixed + ll_fixed + src_fixed + ps_fixed
 
     # Reference source redshift: FittingSequence takes a single z_source.
     idx = ref_source_index if ref_source_index >= 0 else len(config.sources) - 1
@@ -234,12 +324,17 @@ def build_setup(
         kwargs_model["lens_light_model_list"] = ll_models
     if src_models:
         kwargs_model["source_light_model_list"] = src_models
+    if ps_models:
+        kwargs_model["point_source_model_list"] = ps_models
+        kwargs_model["fixed_magnification_list"] = ps_fixed_mag
 
     kwargs_params = {
         "lens_model": [la, lb, lc_, ld, le],
         "lens_light_model": [lla, llb, llc, lld, lle],
         "source_model": [sa, sb, sc, sd, se],
     }
+    if ps_models:
+        kwargs_params["point_source_model"] = [pa, pb, pc, pd, pe]
 
     kwargs_data_joint = _build_data_joint(config, data)
 
@@ -282,6 +377,87 @@ def _build_data_joint(config: lc.Config, data: fd.FitData):
         "multi_band_list": [[kwargs_data, kwargs_psf, kwargs_numerics]],
         "multi_band_type": "single-band",
     }
+
+
+def _ps_roundtrip(config: lc.Config, kw_lens: list,
+                  kw_ps_result: list) -> list[lc.PointSourceParams]:
+    """Map the fit's *image-plane* point-source kwargs back to source-plane app
+    params.
+
+    Forward rendering is SOURCE_POSITION (solve images from the source plane);
+    the fit is LENSED_POSITION (refine the observed image positions).  This is
+    the inverse round trip: image positions are ray-shot back to the source
+    plane (``PointSource.source_position``) and the magnification-corrected
+    amplitude is recovered (``source_amplitude``), so a re-render of the app
+    config reproduces exactly what the fitter saw.
+    """
+    from lenstronomy.PointSource.point_source import PointSource
+
+    out = []
+    for i, point in enumerate(config.point_sources):
+        if i >= len(kw_ps_result):
+            out.append(point)
+            continue
+        kw = kw_ps_result[i] or {}
+        z = point.position_and_redshift(config)[2]
+
+        if point.model == "UNLENSED":
+            ras = np.asarray(kw.get("ra_image") or [point.center_x], dtype=float)
+            decs = np.asarray(kw.get("dec_image") or [point.center_y], dtype=float)
+            amps = np.asarray(kw.get("point_amp") or [point.point_amp], dtype=float)
+            out.append(lc.PointSourceParams(
+                model="UNLENSED",
+                point_amp=float(amps.mean()),
+                source_amp=point.source_amp,
+                center_x=float(ras[0]),
+                center_y=float(decs[0]),
+                redshift=point.redshift,
+                ref_source=point.ref_source,
+            ))
+            continue
+
+        # LENSED: ray-shoot the fitted image positions back through the fitted
+        # lens to recover the intrinsic source-plane coordinates + flux.
+        try:
+            lens_model, _ = lc._get_lens_model(config.lenses, z)
+            fit_ps = PointSource(
+                point_source_type_list=["LENSED_POSITION"],
+                lens_model=lens_model,
+                fixed_magnification_list=[True],
+            )
+            ra_dec = np.asarray(
+                fit_ps.source_position([kw], kwargs_lens=kw_lens), dtype=float
+            ).reshape(-1)
+            amp_src = float(np.asarray(
+                fit_ps.source_amplitude([kw], kwargs_lens=kw_lens), dtype=float
+            ).reshape(-1)[0])
+            ra_img = np.asarray(kw.get("ra_image") or [point.center_x], dtype=float)
+            dec_img = np.asarray(kw.get("dec_image") or [point.center_y], dtype=float)
+            if len(ra_dec) >= 2 and np.all(np.isfinite(ra_dec)):
+                out.append(lc.PointSourceParams(
+                    model="LENSED",
+                    source_amp=amp_src,
+                    center_x=float(ra_dec[0]),
+                    center_y=float(ra_dec[1]),
+                    redshift=point.redshift,
+                    ref_source=point.ref_source,
+                ))
+                continue
+            ra_ok, dec_ok = bool(np.isfinite(ra_img).all()), bool(np.isfinite(dec_img).all())
+        except Exception:
+            ra_ok = dec_ok = False
+            ra_img = np.asarray([point.center_x])
+            dec_img = np.asarray([point.center_y])
+        if not (ra_ok and dec_ok):
+            out.append(lc.PointSourceParams(
+                model="LENSED",
+                source_amp=point.source_amp,
+                center_x=float(ra_img[0]),
+                center_y=float(dec_img[0]),
+                redshift=point.redshift,
+                ref_source=point.ref_source,
+            ))
+    return out
 
 
 def model_config_from_result(config: lc.Config, kwargs_result: dict,
@@ -350,8 +526,11 @@ def model_config_from_result(config: lc.Config, kwargs_result: dict,
             redshift=source.redshift,
         ))
 
+    point_sources = _ps_roundtrip(
+        config, kw_lens, kwargs_result.get("kwargs_ps") or [])
+
     return lc.Config(
-        lenses=lenses, sources=sources,
+        lenses=lenses, sources=sources, point_sources=point_sources,
         num_pix=num_pix, delta_pix=config.delta_pix,
         psf_kernel=config.psf_kernel, sky_amp=config.sky_amp,
     )
@@ -428,6 +607,7 @@ def run_pso(
     lens_specs: list,
     lens_light_specs: list,
     source_specs: list,
+    point_source_specs: list = None,
     n_particles: int = 30,
     n_iterations: int = 100,
     n_restarts: int = 2,
@@ -466,7 +646,8 @@ def run_pso(
 
     try:
         kwargs_data_joint, kwargs_model, kwargs_params, free_names, fixed_names = build_setup(
-            config, data, lens_specs, lens_light_specs, source_specs, ref_source_index,
+            config, data, lens_specs, lens_light_specs, source_specs,
+            point_source_specs, ref_source_index,
         )
     except FitError as exc:
         return FitResult(ok=False, error=str(exc), log=log)

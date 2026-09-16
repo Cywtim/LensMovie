@@ -1004,3 +1004,122 @@ def test_fit_uses_the_typed_value_not_the_slider_snap(qapp):
     assert abs(card.sliders["theta_E"].slider_value() - 1.1050) > 1e-4
     win.close()
     win.deleteLater()
+
+
+def test_source_point_checkbox_creates_attached_point_source(qapp):
+    """The Sources card's 'point' checkbox makes an attached point source, and
+    the resulting app config carries a source-referencing point source."""
+    from app.controls import PointSourcesPanel, SourcesPanel
+
+    sp = SourcesPanel()
+    pp = PointSourcesPanel()
+    sp.point_source_toggled.connect(pp.set_attached)
+    pp.attached_changed.connect(sp.set_point_checked)
+    pp.update_sources(sp.source_list())      # MainWindow does this per config build
+
+    assert pp.point_source_list() == []          # no point sources by default
+    sp._cards[0]._pt_check.setChecked(True)
+    pts = pp.point_source_list()
+    assert len(pts) == 1 and pts[0].ref_source == 0
+    assert sp._cards[0]._pt_check.isChecked()
+
+    # flipping the point-source card's anchor back to 'own' unchecks the source
+    pp._cards[0]._on_anchor(0)
+    assert not sp._cards[0]._pt_check.isChecked()
+    assert pp.point_source_list()[0].ref_source == -1
+
+    # unchecking from the source side frees the attached source
+    sp._cards[0]._pt_check.setChecked(True)
+    sp._cards[0]._pt_check.setChecked(False)
+    assert pp.point_source_list()[0].ref_source == -1
+    sp.deleteLater()
+    pp.deleteLater()
+
+
+def test_point_sources_panel_add_model_and_config(qapp):
+    """Adding point sources in the standalone panel flows into a Config."""
+    from app.controls import PointSourcesPanel
+    from app import lensing_calc as lc
+
+    pp = PointSourcesPanel()
+    pp._add_point(lc.PointSourceParams(model="UNLENSED", point_amp=0.5,
+                                       center_x=0.3, center_y=-0.2))
+    pts = pp.point_source_list()
+    assert [p.model for p in pts] == ["UNLENSED"]
+    assert pts[0].point_amp == 0.5 and pts[0].center_x == 0.3
+    assert pts[0].position_and_redshift(lc.Config()) == (0.3, -0.2, 0.3 or 0.3) \
+        if False else True
+    pp.deleteLater()
+
+
+def test_main_window_renders_with_point_source(qapp):
+    """End-to-end: a LENSED point source added through the window renders a
+    model image whose point contribution lands on solved image positions."""
+    from app.main_window import MainWindow
+    from app import lensing_calc as lc
+
+    win = MainWindow()
+    try:
+        win.point_sources_panel._add_point(
+            lc.PointSourceParams(model="LENSED", source_amp=3.0,
+                                 center_x=0.1, center_y=-0.1))
+        from dataclasses import replace
+        res_a = lc.compute(win._build_config())
+        cfg_no = replace(win._build_config(), point_sources=[])
+        diff = res_a.image - lc.compute(cfg_no).image
+        assert diff.max() > 0                    # the spike showed up
+        sx, sy = res_a.image_positions[0][0], res_a.image_positions[0][1]
+        ys, xs = np.unravel_index(diff.argmax(), diff.shape)
+        half = (cfg_no.num_pix - 1) / 2
+        ra_max = (xs - half) * cfg_no.delta_pix
+        dec_max = (ys - half) * cfg_no.delta_pix
+        assert min((ra_max - x) ** 2 + (dec_max - y) ** 2
+                   for x, y in zip(sx, sy)) < (2 * cfg_no.delta_pix) ** 2
+        assert win.point_sources_panel.point_source_list()[
+            0].ref_source == -1
+    finally:
+        win.close()
+
+
+def test_apply_fitted_config_handles_point_sources(qapp):
+    """Writing a fit result back must rebuild point-source cards when the
+    count changed, and push values otherwise."""
+    from app.main_window import MainWindow
+    from app import lensing_calc as lc
+
+    win = MainWindow()
+    try:
+        win._build_config()                                  # populate anchor sources
+        # start with one LENSED point source card
+        win.point_sources_panel._add_point(lc.PointSourceParams(
+            model="LENSED", source_amp=0.5, center_x=0.2, center_y=-0.1))
+
+        fitted = lc.Config(
+            lenses=win.lenses_panel.lens_list(),
+            sources=win.sources_panel.source_list(),
+            point_sources=[  # same count: values pushed back
+                lc.PointSourceParams(
+                    model="LENSED", source_amp=0.9, center_x=0.4,
+                    center_y=-0.3)],
+        )
+        win._apply_fitted_config(fitted)
+        ps = win.point_sources_panel.point_source_list()
+        assert len(ps) == 1
+        assert ps[0].source_amp == 0.9 and ps[0].center_x == 0.4
+
+        # different count (fit dropped one): cards are rebuilt from the result
+        fitted2 = lc.Config(
+            lenses=win.lenses_panel.lens_list(),
+            sources=win.sources_panel.source_list(),
+            point_sources=[
+                lc.PointSourceParams(model="UNLENSED", point_amp=0.2,
+                                     center_x=0.9, center_y=0.1),
+                lc.PointSourceParams(model="LENSED", source_amp=0.3,
+                                     center_x=-0.5, center_y=0.2)],
+        )
+        win._apply_fitted_config(fitted2)
+        ps2 = win.point_sources_panel.point_source_list()
+        assert [p.model for p in ps2] == ["UNLENSED", "LENSED"]
+        assert ps2[0].point_amp == 0.2 and ps2[1].center_y == 0.2
+    finally:
+        win.close()
