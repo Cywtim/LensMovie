@@ -208,7 +208,7 @@ class Scene3D:
                             vertex_colors=rgb.astype(np.float32),
                             shading="smooth", parent=self.view.scene)
         mesh.set_gl_state(blend=True, depth_test=True)
-        mesh.opacity = 0.55
+        mesh.opacity = 0.75      # fairly solid so the mass plane reads clearly
         return mesh
 
     # ------------------------------------------------------- extended source
