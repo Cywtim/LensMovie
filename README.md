@@ -9,15 +9,14 @@ you adjust parameters with sliders.
 ## Features
 Single-window layout:
 - **Top — 3D scene** (Vispy, GPU), full width and **edge-on** along the line of
-  sight: `observer --------- lens plane(s) --------- source`. Each lens is a mass
-  disk perpendicular to the line of sight, positioned along it by its redshift
-  (balanced so observer / lenses / source are evenly spaced); light rays bend in
-  the sky plane at each lens. Sources are drawn as **extended blobs** sized by
-  their profile radius. The default camera is a side-on view (drag to rotate,
-  scroll to zoom). Rays bend smoothly at each lens plane (Catmull-Rom, for
-  display) instead of kinking sharply. **Controls**: left-drag rotate,
-  right-drag / scroll zoom, **middle-drag** or **Shift+left-drag** pan. The bar
-  spans the full window width with a fixed height.
+  sight: `observer --------- lens plane(s) --------- source`. Lenses sit along
+  the line of sight by their redshift (balanced so observer / lenses / source are
+  evenly spaced); light rays bend in the sky plane at each lens plane. Sources are
+  drawn as **extended blobs** sized by their profile radius. The default camera is
+  a side-on view (drag to rotate, scroll to zoom). Rays bend smoothly at each
+  lens plane (Catmull-Rom, for display) instead of kinking sharply. **Controls**:
+  left-drag rotate, right-drag / scroll zoom, **middle-drag** or **Shift+left-drag**
+  pan. The bar spans the full window width with a fixed height.
 - **Display row**: the display settings share one row with the external-image
   file buttons (**Load… / Clear / Noise… / Mask… / PSF…**), visually separated into
   their own labelled `data:` group so they read as two distinct groups. The row

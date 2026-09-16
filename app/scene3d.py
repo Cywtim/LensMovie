@@ -105,7 +105,6 @@ class Scene3D:
         self._half = 2.6         # sky (y/z) half extent
         self._n_rays = 5
 
-        self._disks = []
         self._rays = []
         self._blobs = []
         self._markers = None
@@ -147,7 +146,7 @@ class Scene3D:
     # ------------------------------------------------------------------ update
     def update_scene(self, config: lc.Config, result: lc.SimResult):
         """Rebuild the edge-on scene from the current config and result."""
-        for v in (self._disks, self._rays, self._markers, self._blobs,
+        for v in (self._rays, self._markers, self._blobs,
                   self._point_markers):
             items = v if isinstance(v, list) else [v]
             for item in items:
@@ -156,15 +155,11 @@ class Scene3D:
                         item.parent = None
                     except Exception:
                         pass
-        self._disks, self._rays, self._markers, self._blobs = [], [], None, []
+        self._rays, self._markers, self._blobs = [], None, []
         self._point_markers = None
 
         z_max = max([l.redshift for l in config.lenses] + [0.3])
 
-        # One lens mass disk per lens, perpendicular to the line of sight (y-z
-        # plane), positioned along X by its redshift.
-        for lens in config.lenses:
-            self._disks.append(self._make_lens_disk(lens, z_max))
         # One extended source blob per source, on the source plane.
         for si, source in enumerate(config.sources):
             self._blobs.append(self._make_source_blob(source, si))
@@ -183,33 +178,6 @@ class Scene3D:
         f = max(0.0, min(1.0, z / z_max))
         margin = 0.55
         return -self._L * margin + f * (2 * self._L * margin)
-
-    # ------------------------------------------------------------------ lens
-    def _make_lens_disk(self, lens, z_max):
-        n = 48
-        h = self._half
-        y = np.linspace(-h, h, n)
-        Y, Z = np.meshgrid(y, y)              # sky plane
-        R = np.hypot(Y - lens.center_y, Z - lens.center_x)
-        eps = 0.06
-        dens = 1.0 / np.maximum(R, eps) ** 2
-        dens = dens / dens.max()
-        x_lens = self._x_of_redshift(lens.redshift, z_max)
-
-        positions = np.stack([np.full_like(R.ravel(), x_lens),
-                              Y.ravel(), Z.ravel()], axis=-1).astype(np.float32)
-        faces = _grid_faces(n, n)
-
-        rgb = np.zeros((n * n, 3))
-        rgb[..., 2] = 0.5 + 0.5 * dens.ravel()
-        rgb[..., 0] = 0.95 * dens.ravel()
-        rgb[..., 1] = 0.2 * dens.ravel()
-        mesh = visuals.Mesh(vertices=positions, faces=faces,
-                            vertex_colors=rgb.astype(np.float32),
-                            shading="smooth", parent=self.view.scene)
-        mesh.set_gl_state(blend=True, depth_test=True)
-        mesh.opacity = 0.1       # barely-there; the rays / scene read through it
-        return mesh
 
     # ------------------------------------------------------- extended source
     def _make_source_blob(self, source, index):
