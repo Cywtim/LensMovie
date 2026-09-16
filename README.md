@@ -4,7 +4,7 @@ An interactive Qt application that visualizes **gravitational lensing** with
 [lenstronomy](https://lenstronomy.readthedocs.io/), re-rendered in real time as
 you adjust parameters with sliders.
 
-![LensMovie interface](img/V_0.6.png.png)
+![LensMovie interface](img/V_0.6.png)
 
 ## Features
 Single-window layout:
