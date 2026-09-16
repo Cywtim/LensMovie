@@ -247,9 +247,9 @@ class MainWindow(QMainWindow):
         self.col_split.addWidget(pane_view0)
         self.col_split.addWidget(pane_view1)
         self.col_split.addWidget(pane_config)
-        self.col_split.setStretchFactor(0, 1)
-        self.col_split.setStretchFactor(1, 1)
-        self.col_split.setStretchFactor(2, 1)
+        self.col_split.setStretchFactor(0, 3)
+        self.col_split.setStretchFactor(1, 3)
+        self.col_split.setStretchFactor(2, 4)
 
         self._grid_host = QWidget()
         gh = QVBoxLayout(self._grid_host)
@@ -259,9 +259,7 @@ class MainWindow(QMainWindow):
 
         grid_band = QHBoxLayout()
         grid_band.setContentsMargins(0, 0, 0, 0)
-        grid_band.addStretch(1)
-        grid_band.addWidget(self._grid_host, 0)
-        grid_band.addStretch(1)
+        grid_band.addWidget(self._grid_host, 1)   # fill the full window width
 
         grid_block = QWidget()
         gb = QVBoxLayout(grid_block)
@@ -390,23 +388,16 @@ class MainWindow(QMainWindow):
         self.controller.center_offset = value
 
     def _update_grid_width(self, window_w: int):
-        """Cap the centred grid band so the view columns stay ~square while the
-        config column keeps enough width for its slider rows.
-
-        A square sky field fills its cell best when that cell is roughly as tall
-        as it is wide; scaling the band with the window (clamped) turns the two
-        view columns into near-square cells.  The cap is generous enough (~1240)
-        that the two view columns stay height-bound (image does not shrink) and
-        the parameter column keeps ~500 px — wide enough to read the slider
-        thumbs.  The column QSplitter's initial sizes are seeded once (default
-        3:3:4) so a later window *resize* does not override the user's drags.
+        """Seed the column splitter once with the 4:3:3 ratio (config : view1 :
+        view2).  The lower half spans the full window width — no centred cap,
+        so there are no empty gutters on wide windows.  The stretch factors keep
+        the ratio on resize; the user can still drag the splitter.
         """
-        band = max(min(int(window_w * 0.84), 1240), 700)
-        self._grid_host.setFixedWidth(band)
         if not getattr(self, "_col_split_seeded", False):
             self._col_split_seeded = True
             self.col_split.setSizes(
-                [int(band * 3 / 10), int(band * 3 / 10), int(band * 4 / 10)]
+                [int(window_w * 3 / 10), int(window_w * 3 / 10),
+                 int(window_w * 4 / 10)]
             )
 
     def resizeEvent(self, event):

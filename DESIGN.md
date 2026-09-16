@@ -90,12 +90,13 @@ Rows and columns are **resizable** with ``QSplitter`` widgets:
   (~306 px: 3D 230 + display 46 + fit) and the grid gets the taller share; the
   user can drag the handle to enlarge the top block (taller external panel).
 
-Filling: a square sky field can only fill a square cell, so the 2x3 grid sits
-in a **centred, width-capped band** (``MainWindow._update_grid_width``) and the
-3D bar is 230 px tall — the two view columns end up near-square (≈361×342 px
-cells, image square ~290 px at the default 1500×1050 window), the square fills
-~its binding dimension, and gutters stay symmetric instead of leaving ~150 px of
-dead space per side.
+Filling: the 2x3 grid spans the full window width (no centred cap — nothing is
+left blank on wide windows).  The horizontal column splitter is seeded once from
+`MainWindow._update_grid_width` with a **4:3:3** ratio (config : view1 : view2)
+and its stretch factors keep that ratio on resize (the user can still drag).
+A square sky field fills its cell as before; on very wide windows the square
+centres in its cell while the parameter column keeps the width its slider rows
+need.
 
 Display row notes:
 - The display settings and the external-image file buttons sit in **one row**,
