@@ -4,6 +4,8 @@ An interactive Qt application that visualizes **gravitational lensing** with
 [lenstronomy](https://lenstronomy.readthedocs.io/), re-rendered in real time as
 you adjust parameters with sliders.
 
+![LensMovie interface](img/V_0.5.png)
+
 ## Features
 Single-window layout:
 - **Top — 3D scene** (Vispy, GPU), full width and **edge-on** along the line of
@@ -121,7 +123,7 @@ scene needs a live OpenGL context and is covered by a smoke run with a display.)
 app/
   main.py          # entry point
   main_window.py   # main window: top row (3D + external image), 2x3 grid
-  controls.py      # LensesPanel + SourcesPanel + DisplayBar
+  controls.py      # LensesPanel + SourcesPanel + DisplayBar + DataBar + FitBar
   plotting.py      # matplotlib canvases (Field/Image/Curves/External)
   lensing_calc.py  # lenstronomy physics core (multi-plane, fields, cc/caustic)
   scene3d.py       # vispy -> edge-on 3D scene
@@ -129,6 +131,7 @@ app/
   fit_data.py      # resample data/noise/mask onto the model grid + chi2
   fitting.py       # build FittingSequence inputs, run PSO (locks -> kwargs_fixed)
   fit_worker.py    # QThread wrapper so a fit does not block the GUI
+img/               # screenshots and generated test data
 tests/
 DESIGN.md
 ```
