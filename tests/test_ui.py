@@ -1207,10 +1207,14 @@ def test_cards_show_only_params_for_selected_model(qapp):
     assert src.sliders["sigma"].isVisible()
     assert not src.sliders["R_sersic"].isVisible()
     assert not src.sliders["e1"].isVisible()
+    # the ROW disappears too: the label hides with the control
+    assert not src._row_labels["R_sersic"].isVisible()
+    assert src._row_labels["sigma"].isVisible()
     src._model_combo.setCurrentText("CORE_SERSIC")
     assert src.sliders["R_sersic"].isVisible()
     assert src.sliders["Rb"].isVisible()
     assert src.sliders["gamma"].isVisible()
+    assert src._row_labels["Rb"].isVisible()
     lp.deleteLater(); sp.deleteLater()
 
 

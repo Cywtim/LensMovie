@@ -230,12 +230,24 @@ class _EntryCard(QGroupBox):
 
         # Sliders are stored in self.sliders: name -> _Slider
         self.sliders: dict[str, _Slider] = {}
+        # Explicit per-row labels, so a row can be hidden whole (label + control).
+        self._row_labels: dict[str, QLabel] = {}
 
     def add_slider(self, name, label, vmin, vmax, value, decimals=2):
         s = _Slider(label, vmin, vmax, value, decimals)
         s.changed.connect(self._on_edit)
         self.sliders[name] = s
-        self.form.addRow(f"{label}:", s)
+        lab = QLabel(f"{label}:")
+        self._row_labels[name] = lab
+        self.form.addRow(lab, s)
+
+    def set_slider_visible(self, name, visible):
+        """Show/hide one parameter row (its label and control together), so an
+        unused parameter truly disappears instead of leaving a bare label."""
+        self.sliders[name].setVisible(visible)
+        lab = self._row_labels.get(name)
+        if lab is not None:
+            lab.setVisible(visible)
 
     # ------------------------------------------------------------- fixing API
     def fixed_params(self) -> set:
@@ -335,10 +347,11 @@ class _LensCard(_EntryCard):
         """Show only the sliders that the current lens / light model uses."""
         mass = lc.lens_param_names(self.model())
         light = self._light_visible_names()
-        for name, s in self.sliders.items():
-            s.setVisible(name in mass or name in light)
+        for name in self.sliders:
+            self.set_slider_visible(name, name in mass or name in light)
+        for name in self.sliders:
             if name.startswith("light_"):
-                s.setEnabled(name in light)   # hidden *and* inert when unused
+                self.sliders[name].setEnabled(name in light)  # inert when unused
 
     def light_model(self) -> str:
         return self._light_combo.currentText()
@@ -402,8 +415,8 @@ class _SourceCard(_EntryCard):
 
     def _sync_visibility(self, *a):
         names = lc.source_param_names(self.model())
-        for name, s in self.sliders.items():
-            s.setVisible(name in names)
+        for name in self.sliders:
+            self.set_slider_visible(name, name in names)
 
     def to_params(self) -> lc.SourceParams:
         s = self.sliders
@@ -501,8 +514,8 @@ class _PointSourceCard(_EntryCard):
 
     def _sync_model(self, *a):
         lensed = self._model_combo.currentText() == "LENSED"
-        self.sliders["source_amp"].setVisible(lensed)
-        self.sliders["point_amp"].setVisible(not lensed)
+        self.set_slider_visible("source_amp", lensed)
+        self.set_slider_visible("point_amp", not lensed)
 
     def to_params(self) -> lc.PointSourceParams:
         s = self.sliders
