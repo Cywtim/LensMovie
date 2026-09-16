@@ -1173,3 +1173,62 @@ def test_entry_cards_auto_numbered(qapp):
     assert [c.title() for c in pp._cards] == ["Point source 1"]
 
     lp.deleteLater(); sp.deleteLater(); pp.deleteLater()
+
+
+def test_cards_show_only_params_for_selected_model(qapp):
+    """Switching the model hides the irrelevant sliders; switching back restores
+    them and their values are preserved."""
+    from app.controls import LensesPanel, SourcesPanel
+    from app import lensing_calc as lc
+
+    lp = LensesPanel()
+    lens = lp._cards[0]
+    lp.show(); qapp.processEvents()   # offscreen: isVisible needs a shown ancestor
+    lens.sliders["theta_E"].set_value(2.0)
+    lens._model_combo.setCurrentText("NFW")
+    assert not lens.sliders["theta_E"].isVisible()
+    assert not lens.sliders["e1"].isVisible()
+    assert lens.sliders["Rs"].isVisible()
+    assert lens.sliders["alpha_Rs"].isVisible()
+    assert lens.sliders["gamma1"].isVisible()        # external shear stays
+
+    lens._model_combo.setCurrentText("SIS_TRUNCATED")
+    assert lens.sliders["Rs"].isVisible() is False
+    assert lens.sliders["r_trunc"].isVisible()
+    assert lens.sliders["theta_E"].isVisible()       # back where it matters
+
+    # and the value that lived on the hidden slider is preserved
+    assert lens.sliders["theta_E"].value() == 2.0
+
+    sp = SourcesPanel()
+    src = sp._cards[0]
+    sp.show(); qapp.processEvents()
+    src._model_combo.setCurrentText("GAUSSIAN")
+    assert src.sliders["sigma"].isVisible()
+    assert not src.sliders["R_sersic"].isVisible()
+    assert not src.sliders["e1"].isVisible()
+    src._model_combo.setCurrentText("CORE_SERSIC")
+    assert src.sliders["R_sersic"].isVisible()
+    assert src.sliders["Rb"].isVisible()
+    assert src.sliders["gamma"].isVisible()
+    lp.deleteLater(); sp.deleteLater()
+
+
+def test_lens_light_sliders_follow_light_model(qapp):
+    from app.controls import LensesPanel
+
+    lp = LensesPanel()
+    lens = lp._cards[0]
+    lp.show(); qapp.processEvents()
+    lens._light_combo.setCurrentText("GAUSSIAN")
+    assert lens.sliders["light_sigma"].isVisible()
+    assert not lens.sliders["light_R_sersic"].isVisible()
+    assert not lens.sliders["light_e1"].isVisible()
+    lens._light_combo.setCurrentText("SERSIC_ELLIPSE")
+    assert lens.sliders["light_R_sersic"].isVisible()
+    assert lens.sliders["light_e1"].isVisible()
+    assert not lens.sliders["light_sigma"].isVisible()
+    lens._light_combo.setCurrentText("NONE")
+    assert not lens.sliders["light_sigma"].isVisible()
+    assert not lens.sliders["light_R_sersic"].isVisible()
+    lp.deleteLater()

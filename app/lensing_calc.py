@@ -270,6 +270,41 @@ _MODEL_PROFILE = {
     "SIS_TRUNCATED": ("SIS_TRUNCATED", ["theta_E", "r_trunc"]),
 }
 
+# Controls that always matter, whatever the profile: the centroid and—for a
+# lens—the external shear terms.
+_LENS_ALWAYS_NAMES = {"gamma1", "gamma2", "center_x", "center_y"}
+_SOURCE_ALWAYS_NAMES = {"amp", "center_x", "center_y"}
+
+
+def lens_param_names(model: str) -> set:
+    """Slider names that are physically relevant for a lens ``model``.
+
+    External shear (gamma1/gamma2) and the centroid apply to every profile, so
+    they are always included; only the profile-specific parameters vary with the
+    model (e.g. NFW shows R_s, alpha_Rs and no theta_E/ellipticity).
+    """
+    _, params = _MODEL_PROFILE.get(model, _MODEL_PROFILE["SIS"])
+    return set(params) | _LENS_ALWAYS_NAMES
+
+
+def source_param_names(model: str) -> set:
+    """Slider names physically relevant for a source light ``model``."""
+    if model not in SOURCE_MODELS:
+        model = "SERSIC_ELLIPSE"
+    if model == "CORE_SERSIC":
+        base = {"amp", "R_sersic", "Rb", "n_sersic", "gamma", "e1", "e2"}
+    elif model.startswith("SERSIC"):
+        base = {"amp", "R_sersic", "n_sersic"}
+        if model == "SERSIC_ELLIPSE":
+            base |= {"e1", "e2"}
+    elif model == "HERNQUIST":
+        base = {"amp", "Rs"}
+    else:  # GAUSSIAN / GAUSSIAN_ELLIPSE
+        base = {"amp", "sigma"}
+        if model == "GAUSSIAN_ELLIPSE":
+            base |= {"e1", "e2"}
+    return base | _SOURCE_ALWAYS_NAMES
+
 
 def available_lens_models() -> list:
     """Lens models that can actually be used in this environment.

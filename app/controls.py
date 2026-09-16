@@ -312,15 +312,33 @@ class _LensCard(_EntryCard):
         self.add_slider("light_e1", "L e1", -0.8, 0.8, lens.light_e1, 2)
         self.add_slider("light_e2", "L e2", -0.8, 0.8, lens.light_e2, 2)
 
-        self._light_combo.currentTextChanged.connect(self._sync_light_enabled)
-        self._sync_light_enabled()
+        self._light_combo.currentTextChanged.connect(self._sync_visibility)
+        self._model_combo.currentTextChanged.connect(self._sync_visibility)
+        self._sync_visibility()
 
-    def _sync_light_enabled(self, *a):
-        """Grey out the light sliders when the lens emits no light."""
-        on = self._light_combo.currentText() != "NONE"
-        for name in ("light_amp", "light_R_sersic", "light_n_sersic",
-                     "light_sigma", "light_e1", "light_e2"):
-            self.sliders[name].setEnabled(on)
+    def _light_visible_names(self) -> set:
+        """Light sliders relevant to the current lens-light model."""
+        lm = self._light_combo.currentText()
+        if lm == "NONE":
+            return set()
+        if lm.startswith("GAUSSIAN"):
+            vis = {"light_amp", "light_sigma"}
+            if lm == "GAUSSIAN_ELLIPSE":
+                vis |= {"light_e1", "light_e2"}
+        else:  # SERSIC / SERSIC_ELLIPSE
+            vis = {"light_amp", "light_R_sersic", "light_n_sersic"}
+            if lm == "SERSIC_ELLIPSE":
+                vis |= {"light_e1", "light_e2"}
+        return vis
+
+    def _sync_visibility(self, *a):
+        """Show only the sliders that the current lens / light model uses."""
+        mass = lc.lens_param_names(self.model())
+        light = self._light_visible_names()
+        for name, s in self.sliders.items():
+            s.setVisible(name in mass or name in light)
+            if name.startswith("light_"):
+                s.setEnabled(name in light)   # hidden *and* inert when unused
 
     def light_model(self) -> str:
         return self._light_combo.currentText()
@@ -377,6 +395,15 @@ class _SourceCard(_EntryCard):
         self.add_slider("gamma", "γ", 0.1, 4.0, source.gamma, 2)
         self.add_slider("center_x", "x", -2.0, 2.0, source.center_x, 2)
         self.add_slider("center_y", "y", -2.0, 2.0, source.center_y, 2)
+
+        # Show only the sliders relevant to the current source profile.
+        self._model_combo.currentTextChanged.connect(self._sync_visibility)
+        self._sync_visibility()
+
+    def _sync_visibility(self, *a):
+        names = lc.source_param_names(self.model())
+        for name, s in self.sliders.items():
+            s.setVisible(name in names)
 
     def to_params(self) -> lc.SourceParams:
         s = self.sliders
@@ -474,8 +501,8 @@ class _PointSourceCard(_EntryCard):
 
     def _sync_model(self, *a):
         lensed = self._model_combo.currentText() == "LENSED"
-        self.sliders["source_amp"].setEnabled(lensed)
-        self.sliders["point_amp"].setEnabled(not lensed)
+        self.sliders["source_amp"].setVisible(lensed)
+        self.sliders["point_amp"].setVisible(not lensed)
 
     def to_params(self) -> lc.PointSourceParams:
         s = self.sliders

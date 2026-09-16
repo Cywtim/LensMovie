@@ -350,3 +350,42 @@ def test_point_source_renders_with_delta_psf():
     )
     img = lc.render_image(cfg)
     assert img.max() > 0 and img.sum() > 0
+
+
+def test_lens_param_names_follow_model():
+    assert lc.lens_param_names("SIS") == {"theta_E", "gamma1", "gamma2",
+                                          "center_x", "center_y"}
+    assert lc.lens_param_names("SIE") == {"theta_E", "e1", "e2", "gamma1",
+                                          "gamma2", "center_x", "center_y"}
+    assert lc.lens_param_names("SPEP") == {"theta_E", "gamma", "e1", "e2",
+                                           "gamma1", "gamma2", "center_x",
+                                           "center_y"}
+    assert lc.lens_param_names("NFW") == {"Rs", "alpha_Rs", "gamma1", "gamma2",
+                                          "center_x", "center_y"}
+    assert lc.lens_param_names("SIS_TRUNCATED") == {"theta_E", "r_trunc",
+                                                    "gamma1", "gamma2",
+                                                    "center_x", "center_y"}
+    # every profile keeps the always-on controls
+    for m in ("SIS", "SIE", "SPEP", "NFW", "SIS_TRUNCATED"):
+        assert {"center_x", "center_y", "gamma1", "gamma2"} <= lc.lens_param_names(m)
+
+
+def test_source_param_names_follow_model():
+    assert lc.source_param_names("GAUSSIAN") == {"amp", "sigma", "center_x",
+                                                 "center_y"}
+    assert lc.source_param_names("GAUSSIAN_ELLIPSE") == {"amp", "sigma", "e1",
+                                                         "e2", "center_x",
+                                                         "center_y"}
+    assert lc.source_param_names("SERSIC") == {"amp", "R_sersic", "n_sersic",
+                                               "center_x", "center_y"}
+    assert lc.source_param_names("SERSIC_ELLIPSE") == {"amp", "R_sersic",
+                                                       "n_sersic", "e1", "e2",
+                                                       "center_x", "center_y"}
+    assert lc.source_param_names("HERNQUIST") == {"amp", "Rs", "center_x",
+                                                  "center_y"}
+    assert lc.source_param_names("CORE_SERSIC") == {"amp", "R_sersic", "Rb",
+                                                    "n_sersic", "gamma", "e1",
+                                                    "e2", "center_x", "center_y"}
+    # mutually exclusive families
+    assert "sigma" not in lc.source_param_names("SERSIC")
+    assert "R_sersic" not in lc.source_param_names("GAUSSIAN")

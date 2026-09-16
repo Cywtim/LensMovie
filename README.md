@@ -69,6 +69,12 @@ Single-window layout:
     Entry cards are **auto-numbered** (`Lens 1`, `Lens 2`, …; likewise
     `Source 1`, … and `Point source 1`, …) and renumbered on add/remove — the
     point-source "attach to Source N" dropdown follows the same 1-based labels.
+    Each card shows **only the sliders its model actually uses** (e.g. NFW gives
+    `R_s`, `alpha_Rs` with no theta_E/ellipticity; `SIS_TRUNCATED` adds `r_trunc`;
+    external shear and the centroid stay for every model), and the deflector-light
+    sliders follow the chosen light profile (GAUSSIAN vs SERSIC), hidden while the
+    light model is `NONE`. Switching models never loses a value — hidden sliders
+    keep it and come back on return.
   - **Deflector (lens galaxy) light per lens**: a light-model selector
     (`NONE` / `SERSIC_ELLIPSE` / `SERSIC` / `GAUSSIAN_ELLIPSE` / `GAUSSIAN`) with
     its own amplitude, size, Sersic index, ellipticity and Gaussian sigma. This
