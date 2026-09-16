@@ -208,7 +208,7 @@ class Scene3D:
                             vertex_colors=rgb.astype(np.float32),
                             shading="smooth", parent=self.view.scene)
         mesh.set_gl_state(blend=True, depth_test=True)
-        mesh.opacity = 0.35      # translucent so the rays / scene read through it
+        mesh.opacity = 0.25      # very translucent; the rays / scene read through it
         return mesh
 
     # ------------------------------------------------------- extended source

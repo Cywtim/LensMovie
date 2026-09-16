@@ -1123,3 +1123,25 @@ def test_apply_fitted_config_handles_point_sources(qapp):
         assert ps2[0].point_amp == 0.2 and ps2[1].center_y == 0.2
     finally:
         win.close()
+
+
+def test_config_panels_resizeable_via_splitter(qapp):
+    """Lenses / Sources / Point sources share a vertical splitter so the user
+    can resize each config panel independently."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    try:
+        sp = win.cfg_split
+        assert sp is not None
+        assert sp.orientation() == 2  # Qt.Vertical
+        widgets = [sp.widget(i) for i in range(sp.count())]
+        assert widgets == [win.lenses_panel, win.sources_panel,
+                           win.point_sources_panel]
+        # moving the handle resizes the panels (no crash)
+        sizes = sp.sizes()
+        sizes[1] += 40
+        sp.setSizes(sizes)
+        assert sum(sp.sizes()) > 0
+    finally:
+        win.close()

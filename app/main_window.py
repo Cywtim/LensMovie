@@ -230,9 +230,17 @@ class MainWindow(QMainWindow):
         vc = QVBoxLayout(pane_config)
         vc.setContentsMargins(4, 2, 4, 4)
         vc.setSpacing(4)
-        vc.addWidget(self.lenses_panel, 1)
-        vc.addWidget(self.sources_panel, 1)
-        vc.addWidget(self.point_sources_panel, 1)
+        # The three config panels share the column; a vertical splitter lets the
+        # user resize lenses / sources / point sources independently.
+        self.cfg_split = QSplitter(Qt.Vertical)
+        self.cfg_split.setChildrenCollapsible(False)
+        self.cfg_split.addWidget(self.lenses_panel)
+        self.cfg_split.addWidget(self.sources_panel)
+        self.cfg_split.addWidget(self.point_sources_panel)
+        self.cfg_split.setStretchFactor(0, 1)
+        self.cfg_split.setStretchFactor(1, 1)
+        self.cfg_split.setStretchFactor(2, 1)
+        vc.addWidget(self.cfg_split, 1)
 
         self.col_split = QSplitter(Qt.Horizontal)
         self.col_split.setChildrenCollapsible(False)
