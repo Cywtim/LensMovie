@@ -66,6 +66,9 @@ Single-window layout:
   - **Multiple lenses**: each with model selection (`SIS` / `SIE` / `SPEP` /
     `PEMD` / `NFW` / `SIS_TRUNCATED`; PEMD only when `fastell4py` is present), own
     parameters (theta_E, shear, ellipticity, center) and **redshift**; add/remove.
+    Entry cards are **auto-numbered** (`Lens 1`, `Lens 2`, …; likewise
+    `Source 1`, … and `Point source 1`, …) and renumbered on add/remove — the
+    point-source "attach to Source N" dropdown follows the same 1-based labels.
   - **Deflector (lens galaxy) light per lens**: a light-model selector
     (`NONE` / `SERSIC_ELLIPSE` / `SERSIC` / `GAUSSIAN_ELLIPSE` / `GAUSSIAN`) with
     its own amplitude, size, Sersic index, ellipticity and Gaussian sigma. This

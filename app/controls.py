@@ -453,7 +453,7 @@ class _PointSourceCard(_EntryCard):
         self._anchor_combo.clear()
         self._anchor_combo.addItem("own position")
         for i in range(len(sources)):
-            self._anchor_combo.addItem(f"attach to source {i}")
+            self._anchor_combo.addItem(f"attach to Source {i + 1}")
         self._anchor_combo.blockSignals(False)
         self._anchor_combo.setCurrentIndex(self._ref_source + 1)
         self._apply_anchor()
@@ -495,10 +495,11 @@ class _CardListPanel(QScrollArea):
 
     changed = pyqtSignal()
 
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, entry_label: str, parent=None):
         super().__init__(parent)
         self.setWidgetResizable(True)
         self._cards: list[_EntryCard] = []
+        self._entry_label = entry_label   # "Lens" / "Source" / "Point source"
 
         body = QWidget()
         self._root = QVBoxLayout(body)
@@ -516,11 +517,17 @@ class _CardListPanel(QScrollArea):
         idx = self._root.count() - 1 if stretch.spacerItem() is not None else self._root.count()
         self._root.insertWidget(idx, card)
 
+    def _relabel(self):
+        """Renumber the card titles (Lens 1, Lens 2, …) after add/remove."""
+        for i, card in enumerate(self._cards):
+            card.setTitle(f"{self._entry_label} {i + 1}")
+
     def _add_card(self, card):
         self._cards.append(card)
         self._insert_card(card)
         card.changed.connect(self._emit)
         card.remove_requested.connect(self._remove_card)
+        self._relabel()
 
     def _remove_card(self, card):
         if len(self._cards) <= 1:
@@ -528,6 +535,7 @@ class _CardListPanel(QScrollArea):
         self._cards.remove(card)
         card.setParent(None)
         card.deleteLater()
+        self._relabel()
         self._emit()
 
     def _emit(self, *a):
@@ -551,7 +559,7 @@ class LensesPanel(_CardListPanel):
     """Right hand column (top): the list of lens planes."""
 
     def __init__(self, parent=None):
-        super().__init__("Lenses", parent=parent)
+        super().__init__("Lenses", "Lens", parent=parent)
         btn = QPushButton("+ Add lens")
         btn.clicked.connect(self._add_lens)
         self._root.insertWidget(self._root.count() - 1, btn)
@@ -570,7 +578,7 @@ class SourcesPanel(_CardListPanel):
     point_source_toggled = pyqtSignal(int, bool)   # (source index, now attached?)
 
     def __init__(self, parent=None):
-        super().__init__("Sources", parent=parent)
+        super().__init__("Sources", "Source", parent=parent)
         btn = QPushButton("+ Add source")
         btn.clicked.connect(self._add_source)
         self._root.insertWidget(self._root.count() - 1, btn)
@@ -603,7 +611,7 @@ class PointSourcesPanel(_CardListPanel):
     attached_changed = pyqtSignal(int, bool)   # (source index, now attached?)
 
     def __init__(self, parent=None):
-        super().__init__("Point sources", parent=parent)
+        super().__init__("Point sources", "Point source", parent=parent)
         btn = QPushButton("+ Add point source")
         btn.clicked.connect(self._add_point)
         self._root.insertWidget(self._root.count() - 1, btn)
@@ -631,6 +639,7 @@ class PointSourcesPanel(_CardListPanel):
             self._cards.remove(card)
             card.setParent(None)
             card.deleteLater()
+            self._relabel()
             self.changed.emit()
             self._sync_attached_flags()
 

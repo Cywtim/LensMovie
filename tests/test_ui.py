@@ -1145,3 +1145,31 @@ def test_config_panels_resizeable_via_splitter(qapp):
         assert sum(sp.sizes()) > 0
     finally:
         win.close()
+
+
+def test_entry_cards_auto_numbered(qapp):
+    """Card titles carry a live index (Lens 1, Lens 2, …) that stays correct
+    after adding and removing entries."""
+    from app.controls import LensesPanel, SourcesPanel, PointSourcesPanel
+
+    lp = LensesPanel()
+    assert [c.title() for c in lp._cards] == ["Lens 1"]
+    lp._add_card(lp._cards[0].__class__())
+    lp._add_card(lp._cards[0].__class__())
+    assert [c.title() for c in lp._cards] == ["Lens 1", "Lens 2", "Lens 3"]
+    lp._remove_card(lp._cards[0])
+    assert [c.title() for c in lp._cards] == ["Lens 1", "Lens 2"]
+
+    sp = SourcesPanel()
+    sp._add_card(sp._cards[0].__class__())
+    assert [c.title() for c in sp._cards] == ["Source 1", "Source 2"]
+
+    pp = PointSourcesPanel()
+    from app import lensing_calc as lc
+    pp._add_point(lc.PointSourceParams())
+    pp._add_point(lc.PointSourceParams())
+    assert [c.title() for c in pp._cards] == ["Point source 1", "Point source 2"]
+    pp._remove_card(pp._cards[0])
+    assert [c.title() for c in pp._cards] == ["Point source 1"]
+
+    lp.deleteLater(); sp.deleteLater(); pp.deleteLater()
