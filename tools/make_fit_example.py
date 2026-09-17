@@ -37,7 +37,7 @@ OUT = Path(__file__).resolve().parents[1] / "examples" / "fit"
 NUM_PIX = 150
 DELTA_PIX = 0.05          # arcsec / pixel  (matches the GUI default)
 PSF_FWHM = 0.12           # arcsec seeing
-NOISE_SIGMA = 0.01        # constant 1-sigma noise (units of the model surface)
+NOISE_SIGMA = 0.004       # constant 1-sigma noise (units of the model surface)
 SEED = 11                 # fixed -> reproducible example
 
 

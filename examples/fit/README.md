@@ -2,41 +2,23 @@
 
 A ready-to-fit 150×150 arcsec-lensed image (0.05″/px), rendered by LensMovie's
 own forward model and blurred by a 0.12″ PSF, plus Gaussian noise
-(σ = 0.01).  The exact truth is in `truth.json`.
-
-**Noise semantics (0.11+):** the image you load is treated as the **clean model**.
-Load its σ-map as the noise file and LensMovie shows and fits `clean + noise` —
-a deterministic Gaussian draw from that sigma map (the draw seed matches this
-generator, so `model_truth.npy + noise.npy` reproduces `data.npy` exactly).
-No noise file → the clean image is shown and fitted as-is (chi² is then blocked
-until a sigma map is loaded).
+(σ = 0.004).  The exact truth is in `truth.json`.
 
 ## How to fit it in the GUI
 
-1. **Load the data**: *Load image…* → `model_truth.npy` (the noise-free model)
-2. **Load the noise** (chi² needs it *and* adds the noise to the image):
-   *Load noise…* → `noise.npy` (a constant 1-σ = 0.01 map; the "data" panel now
-   shows the noisy observation ≡ `data.npy`).
-   - `data.npy` is that same observation pre-rolled; load it only as a visual
-     reference — if you load it *as the image* AND the σ-map, the noise is added
-     again (double noise).
+1. **Load the data**: *Load image…* → `data.npy`
+2. **Load the noise** (chi² needs it): *Load noise…* → `noise.npy`
 3. **PSF**: either *Load PSF…* → `psf_kernel.npy`, or set the display "
-"**PSF FWHM = 0.12″** (same kernel, reconstructed analytically).
-   Unlike the noise, the PSF **must be set**: the data was blurred with it, so
-   the fitted model must be convolved with the same kernel (otherwise χ² is
-   systematically worse).
+"**PSF FWHM = 0.12″** (same kernel, reconstructed analytically)
 4. **Model grid**: NumPix = 150, Δpix = 0.05″ (the data is already on this grid,
    centred on the lens, so no resampling offset is needed)
 5. **Pick the profiles** (matching `truth.json`):
    - Lens → **SIE**, with external shear (set γ1 = 0.03, γ2 = 0.02 -> a SHEAR is
      fitted) and deflector light → **SERSIC_ELLIPSE**
    - Source → **SERSIC_ELLIPSE**
-6. **Start values**: use `truth.json` for an instant demo (the fit is guaranteed
-   to never do worse than its starting model — from the exact truth it just stays
-   flat at the noise floor), or perturb a little (e.g. lens θ_E = 0.85,
-   source centre ≈ (0.1, 0.05) — still on the arc) to see the PSO climb to χ².
-   The starting position is seeded as one of the fit's particles, so even an
-   unlucky swarm cannot end up below the values you started from.
+6. **Start values**: use `truth.json` for an instant demo, or perturb a little
+   (e.g. lens θ_E = 0.85, source centre ≈ (0.1, 0.05) — still on the arc) to see
+   the PSO climb to χ²
 7. **Fit (PSO)** → after it finishes, `Save fit…` gets the report PNG and
    `Save chain…` the parameter chain (CSV + trajectories)
 

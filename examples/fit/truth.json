@@ -2,7 +2,7 @@
   "num_pix": 150,
   "delta_pix (arcsec/px)": 0.05,
   "psf_fwhm (arcsec)": 0.12,
-  "noise_sigma": 0.01,
+  "noise_sigma": 0.004,
   "lens": {
     "model": "SIE",
     "theta_E": 1.05,
