@@ -1,0 +1,40 @@
+{
+  "num_pix": 150,
+  "delta_pix (arcsec/px)": 0.05,
+  "psf_fwhm (arcsec)": 0.12,
+  "noise_sigma": 0.01,
+  "lens": {
+    "model": "SIE",
+    "theta_E": 1.05,
+    "e1": 0.15,
+    "e2": 0.05,
+    "gamma1 (external shear)": 0.03,
+    "gamma2 (external shear)": 0.02,
+    "center_x / y": [
+      0.0,
+      0.0
+    ],
+    "redshift": 0.5,
+    "light_model": "SERSIC_ELLIPSE",
+    "light_amp": 0.6,
+    "light_R_sersic": 0.7,
+    "light_n_sersic": 3.5,
+    "light_e1/e2": [
+      0.1,
+      0.05
+    ]
+  },
+  "source": {
+    "model": "SERSIC_ELLIPSE",
+    "amp": 1.4,
+    "R_sersic": 0.22,
+    "n_sersic": 2.5,
+    "e1": 0.15,
+    "e2": -0.1,
+    "center_x/y": [
+      0.18,
+      0.08
+    ],
+    "redshift": 1.5
+  }
+}

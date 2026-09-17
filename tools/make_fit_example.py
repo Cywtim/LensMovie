@@ -1,0 +1,242 @@
+"""Generate a ready-to-fit example dataset under ``examples/fit/``.
+
+The example is produced by LensMovie's own forward model (``lensing_calc``), so
+what you load into the GUI is exactly a model LensMovie can reproduce:
+
+  * ``data.npy``         — the lensed image WITH Gaussian noise (the "observation"),
+  * ``model_truth.npy``  — the noiseless true model (for comparing after a fit),
+  * ``noise.npy``        — 1-sigma noise map on the same grid (needed for chi²),
+  * ``psf_kernel.npy``   — the PSF that blurred the data (or set FWHM = 0.12″),
+  * ``truth.json``       — the exact truth configuration (params + start values),
+  * ``overview.png``     — true model | noisy data side by side.
+
+Run from the repository root::
+
+    conda run -n lenstronomy_env python tools/make_fit_example.py
+
+Add ``--verify`` to also run a short PSO fit from a perturbed start and print the
+chi² improvement (a sanity check that the files drive the fitting pipeline).
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app import lensing_calc as lc          # noqa: E402
+from app import theme                       # noqa: E402
+
+OUT = Path(__file__).resolve().parents[1] / "examples" / "fit"
+NUM_PIX = 150
+DELTA_PIX = 0.05          # arcsec / pixel  (matches the GUI default)
+PSF_FWHM = 0.12           # arcsec seeing
+NOISE_SIGMA = 0.01        # constant 1-sigma noise (units of the model surface)
+SEED = 11                 # fixed -> reproducible example
+
+
+def truth_config() -> lc.Config:
+    """The truth used to render the example: SIE + external shear + lens light,
+    a Sersic arc source, PSF blur."""
+    return lc.Config(
+        lenses=[
+            lc.LensParams(
+                model="SIE", theta_E=1.05, e1=0.15, e2=0.05,
+                gamma1=0.03, gamma2=0.02, center_x=0.0, center_y=0.0,
+                redshift=0.5,
+                light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                light_R_sersic=0.7, light_n_sersic=3.5,
+                light_e1=0.1, light_e2=0.05,
+            )
+        ],
+        sources=[
+            lc.SourceParams(
+                amp=1.4, R_sersic=0.22, n_sersic=2.5, e1=0.15, e2=-0.1,
+                center_x=0.18, center_y=0.08, redshift=1.5,
+                model="SERSIC_ELLIPSE",
+            )
+        ],
+        num_pix=NUM_PIX, delta_pix=DELTA_PIX,
+        psf_kernel=lc.gaussian_psf_kernel(PSF_FWHM, DELTA_PIX),
+        sky_amp=0.0,
+    )
+
+
+def config_to_json(cfg: lc.Config) -> dict:
+    lens = cfg.lenses[0]
+    src = cfg.sources[0]
+    return {
+        "num_pix": cfg.num_pix,
+        "delta_pix (arcsec/px)": cfg.delta_pix,
+        "psf_fwhm (arcsec)": PSF_FWHM,
+        "noise_sigma": NOISE_SIGMA,
+        "lens": {
+            "model": lens.model,
+            "theta_E": lens.theta_E, "e1": lens.e1, "e2": lens.e2,
+            "gamma1 (external shear)": lens.gamma1,
+            "gamma2 (external shear)": lens.gamma2,
+            "center_x / y": [lens.center_x, lens.center_y],
+            "redshift": lens.redshift,
+            "light_model": lens.light_model,
+            "light_amp": lens.light_amp, "light_R_sersic": lens.light_R_sersic,
+            "light_n_sersic": lens.light_n_sersic,
+            "light_e1/e2": [lens.light_e1, lens.light_e2],
+        },
+        "source": {
+            "model": src.model, "amp": src.amp, "R_sersic": src.R_sersic,
+            "n_sersic": src.n_sersic, "e1": src.e1, "e2": src.e2,
+            "center_x/y": [src.center_x, src.center_y],
+            "redshift": src.redshift,
+        },
+    }
+
+
+def overview_png(model: np.ndarray, data: np.ndarray) -> Path:
+    """Side-by-side dark overview: noiseless truth | noisy observation."""
+    s = theme.CANVAS_STYLE
+    with matplotlib.rc_context({
+        "figure.facecolor": s["figure_face"],
+        "axes.facecolor": s["axes_face"],
+        "axes.edgecolor": s["spine"],
+        "axes.labelcolor": s["dim"],
+        "xtick.color": s["dim"], "ytick.color": s["dim"],
+        "text.color": s["text"],
+    }):
+        half = (NUM_PIX / 2 - 0.5) * DELTA_PIX
+        fig, axes = plt.subplots(1, 2, figsize=(9, 4.2))
+        for ax, arr, title in zip(axes, (model, data),
+                                  ("true model (noiseless)", "data (with noise)")):
+            im = ax.imshow(arr, origin="lower", cmap="magma",
+                           extent=(-half, half, -half, half),
+                           interpolation="nearest")
+            ax.set_title(title, fontsize=9)
+            ax.tick_params(labelsize=7)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03) \
+                .ax.tick_params(labelsize=7)
+        out = OUT / "overview.png"
+        fig.tight_layout()
+        fig.savefig(out, dpi=150)
+        plt.close(fig)
+        return out
+
+
+def write_readme(truth) -> Path:
+    text = f"""# Fit example — generated by `tools/make_fit_example.py`
+
+A ready-to-fit 150×150 arcsec-lensed image (0.05″/px), rendered by LensMovie's
+own forward model and blurred by a {PSF_FWHM:.2f}″ PSF, plus Gaussian noise
+(σ = {NOISE_SIGMA}).  The exact truth is in `truth.json`.
+
+## How to fit it in the GUI
+
+1. **Load the data**: *Load image…* → `data.npy`
+2. **Load the noise** (chi² needs it): *Load noise…* → `noise.npy`
+3. **PSF**: either *Load PSF…* → `psf_kernel.npy`, or set the display "
+"**PSF FWHM = 0.12″** (same kernel, reconstructed analytically)
+4. **Model grid**: NumPix = 150, Δpix = 0.05″ (the data is already on this grid,
+   centred on the lens, so no resampling offset is needed)
+5. **Pick the profiles** (matching `truth.json`):
+   - Lens → **SIE**, with external shear (set γ1 = 0.03, γ2 = 0.02 -> a SHEAR is
+     fitted) and deflector light → **SERSIC_ELLIPSE**
+   - Source → **SERSIC_ELLIPSE**
+6. **Start values**: use `truth.json` for an instant demo, or perturb a little
+   (e.g. lens θ_E = 0.85, source centre ≈ (0.1, 0.05) — still on the arc) to see
+   the PSO climb to χ²
+7. **Fit (PSO)** → after it finishes, `Save fit…` gets the report PNG and
+   `Save chain…` the parameter chain (CSV + trajectories)
+
+Tip: only unlock (~ 🔓 toggle) the parameters you want varied; lock everything
+else so the fit stays well-posed and fast.
+"""
+    out = OUT / "README.md"
+    out.write_text(text, encoding="utf-8")
+    return out
+
+
+def main():
+    if "--verify" in sys.argv:
+        _verify()
+    else:
+        _generate()
+
+
+def _generate():
+    OUT.mkdir(parents=True, exist_ok=True)
+    cfg = truth_config()
+    model = np.asarray(lc.compute(cfg).image, dtype=float)
+    rng = np.random.RandomState(SEED)
+    noise = rng.normal(0.0, NOISE_SIGMA, model.shape)
+    data = model + noise
+
+    np.save(OUT / "data.npy", data)
+    np.save(OUT / "model_truth.npy", model)
+    np.save(OUT / "noise.npy", np.full(model.shape, NOISE_SIGMA))
+    np.save(OUT / "psf_kernel.npy", cfg.psf_kernel)
+    (OUT / "truth.json").write_text(
+        json.dumps(config_to_json(cfg), indent=2), encoding="utf-8")
+    overview = overview_png(model, data)
+    readme = write_readme(cfg)
+
+    mn, mx = model.min(), model.max()
+    print(f"wrote {len(list(OUT.iterdir()))} files in {OUT}:")
+    print(f"  data / model_truth / noise / psf_kernel  [{NUM_PIX}x{NUM_PIX}, "
+          f"{DELTA_PIX:.2f}\"/px]  model range {mn:.3g}..{mx:.3g}")
+    print(f"  {overview.relative_to(OUT.parents[1])}")
+    print(f"  {readme.relative_to(OUT.parents[1])}")
+
+
+def _verify():
+    """Short PSO from a perturbed start: proves the files drive the fit."""
+    sys.path.insert(0, str(OUT))
+    from app import fit_data as fd
+    from app import fitting as ft
+
+    cfg = truth_config()
+    truth = lc.compute(cfg).image
+    data = fd.FitData(image=np.load(OUT / "data.npy"),
+                      noise=np.load(OUT / "noise.npy"),
+                      psf_kernel=np.load(OUT / "psf_kernel.npy"),
+                      delta_pix=DELTA_PIX)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIE", theta_E=0.85, e1=0.15, e2=0.05,
+                              gamma1=0.03, gamma2=0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.7, light_n_sersic=3.5,
+                              light_e1=0.1, light_e2=0.05)],
+        sources=[lc.SourceParams(amp=1.4, R_sersic=0.22, n_sersic=2.5, e1=0.15,
+                                 e2=-0.1, center_x=0.1, center_y=0.05,
+                                 redshift=1.5, model="SERSIC_ELLIPSE")],
+        num_pix=NUM_PIX, delta_pix=DELTA_PIX,
+        psf_kernel=cfg.psf_kernel,
+    )
+    lens_s = [{"theta_E": (0.85, 0.3, 2.0, False),
+               "e1": (0.15, -0.3, 0.3, True), "e2": (0.05, -0.3, 0.3, True),
+               "gamma1": (0.03, -0.2, 0.2, True), "gamma2": (0.02, -0.2, 0.2, True),
+               "center_x": (0.0, -0.5, 0.5, True), "center_y": (0.0, -0.5, 0.5, True),
+               }]
+    ll_s = [{"light_amp": (0.6, 0.0, 2.0, True),
+             "light_R_sersic": (0.7, 0.1, 2.0, True),
+             "light_n_sersic": (3.5, 0.5, 8.0, True),
+             "light_e1": (0.1, -0.5, 0.5, True), "light_e2": (0.05, -0.5, 0.5, True)}]
+    src_s = [{"amp": (1.4, 0.0, 5.0, True),
+              "R_sersic": (0.22, 0.05, 1.0, True),
+              "n_sersic": (2.5, 0.5, 6.0, True),
+              "e1": (0.15, -0.5, 0.5, True), "e2": (-0.1, -0.5, 0.5, True),
+              "center_x": (0.1, -0.5, 0.5, False),
+              "center_y": (0.05, -0.5, 0.5, False)}]
+    print("verifying: short fit (θ_E + source centre free)...")
+    res = ft.run_pso(start, data, lens_s, ll_s, src_s,
+                     n_particles=20, n_iterations=40, n_restarts=1, polish=True,
+                     preview=None, preview_interval=100)
+    print(f"  ok={res.ok}  χ² {res.chi2_before:.4g} -> {res.chi2_after:.4g}"
+          f"  ({res.n_free} free, {len(res.chain_iter)} chain samples)")
+
+
+if __name__ == "__main__":
+    main()

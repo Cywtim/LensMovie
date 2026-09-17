@@ -55,6 +55,11 @@ Single-window layout:
     (CSV) plus a per-parameter trajectory figure (PNG), so you can see exactly
     how each fitted value converged. The chain is recorded by the fit loop
     independently of the (optional) image previews, so it is always available.
+- **Ready-to-fit example** in `examples/fit/` (regenerate with
+  `tools/make_fit_example.py`): a 150×150 lensed image rendered by the app's own
+  forward model, blurred by a 0.12″ PSF with noise — plus the noise map, the PSF
+  kernel, the exact truth configuration (`truth.json`) and step-by-step
+  instructions (`README.md`), so you can load it and run a fit in a few clicks.
 - **Fit-data layer** (inputs for the fit):
   - **pixel scale** (`arcsec/px`) is a control in the display strip and drives the
     model grid, so model and data can share one grid.
