@@ -221,6 +221,9 @@ def test_render_image_matches_compute_and_is_image_only():
 @pytest.mark.slow
 def test_run_pso_emits_converging_previews():
     """The fit must report intermediate models so the user can watch it."""
+    # PSO is fully driven by numpy's global RNG: fix the seed so this regression
+    # test is deterministic (unseeded draws made it flaky ~1/3 of the time).
+    np.random.seed(0)
     truth = _truth_config()
     data = _data_for(truth)
     start = lc.Config(

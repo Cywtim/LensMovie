@@ -646,6 +646,16 @@ def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
         fs.likelihoodModule.logL, list(lower_start), list(upper_start),
         particle_count=int(n_particles),
     )
+    # lenstronomy's initial swarm is purely uniform in the box — the starting
+    # position is NOT a candidate, so in many dimensions the random particles can
+    # all be worse than a sharp, near-optimal start and the "best" would regress.
+    # Seed one particle exactly at ``init_pos`` so a fit can never end up worse
+    # than where it started (the rest of the swarm still explores around it).
+    try:
+        swarm.swarm[0].position = [float(v) for v in init_pos]
+        swarm.swarm[0].velocity = [0.0] * len(init_pos)
+    except Exception:
+        pass
 
     best_pos = init_pos
     last_preview = 0.0
@@ -764,6 +774,14 @@ def run_pso(
                 preview=preview, preview_interval=preview_interval,
                 free_names=free_names,
             )
+            # Swarm-stage solution is always a candidate: with the ``init_pos``
+            # particle seeded inside the loop it can never be worse than the
+            # start, and we keep it if refinement does not help.
+            cfg_swarm = model_config_from_result(config, kw_res, data.num_pix,
+                                                 ref_source_index)
+            chi2_swarm = fd.chi2(lc.compute(cfg_swarm).image, data)
+            cfg_i, kw_i = cfg_swarm, kw_res
+            chi2_i = chi2_swarm
             if polish:
                 # Refine the swarm's best solution; this is what makes the fit
                 # reliably converge rather than depending on PSO luck. The swarm
@@ -773,16 +791,27 @@ def run_pso(
                     "n_iterations": int(n_iterations),
                     "method": "Nelder-Mead",
                 }]])
-                kw_res = fs.best_fit()
-            cfg_i = model_config_from_result(config, kw_res, data.num_pix,
-                                             ref_source_index)
-            chi2_i = fd.chi2(lc.compute(cfg_i).image, data)
+                kw_simplex = fs.best_fit()
+                cfg_simplex = model_config_from_result(config, kw_simplex,
+                                                       data.num_pix,
+                                                       ref_source_index)
+                chi2_simplex = fd.chi2(lc.compute(cfg_simplex).image, data)
+                # SIMPLEX must not hurt: keep whichever solution scores better.
+                if chi2_simplex < chi2_swarm:
+                    cfg_i, kw_i, chi2_i = cfg_simplex, kw_simplex, chi2_simplex
             say(f"restart {attempt + 1}/{attempts}: chi2 = {chi2_i:.4g}")
             if best is None or chi2_i < best[0]:
                 best = (chi2_i, cfg_i, kw_res, samples)
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             say(f"restart {attempt + 1}/{attempts} failed: {last_error}")
+
+    # Hard floor: a fit must never report a result *worse* than the starting
+    # model (the user's current slider values).  The swarms are random, so on an
+    # unlucky draw even the seeded init particle can be beaten by regression; if
+    # the best restart is still worse than where we began, keep the start itself.
+    if best is not None and best[0] > chi2_before:
+        best = (chi2_before, config, None, best[3])
 
     if best is None:
         return FitResult(ok=False, error=last_error or "fit failed", log=log,
