@@ -65,7 +65,12 @@ Single-window layout:
     model grid, so model and data can share one grid.
   - **PSF**: a Gaussian `FWHM` control, or load a PSF **kernel** file.
     `FWHM = 0` keeps the default delta PSF.
-  - **Load noise / mask** (same-shape files) for a proper chi-squared likelihood.
+  - **Load noise** (a per-pixel σ map): the loaded image is treated as the
+    **clean model**, and with a σ map loaded the app shows *and* fits the noisy
+    observation — `image + Gaussian draw(σ)` (deterministic, seeded). No σ map:
+    the clean image is used as-is and a chi-squared fit is blocked.
+  - **Load mask** (same-shape file) for a proper chi-squared likelihood (kept
+    pixels only; reported in the “on model grid” summary).
   - **“preview on model grid”** resamples the loaded data onto the model grid
     (pixel scale + centre) so the alignment can be verified; the label then
     reports the grid, resampling, noise, mask coverage and PSF.

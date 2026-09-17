@@ -37,3 +37,24 @@ def test_generate_writes_consistent_example(tmp_path, monkeypatch):
     cfg = mfe.config_to_json(generated)
     assert cfg["lens"]["model"] == "SIE"
     assert cfg["source"]["center_x/y"] == pytest.approx([0.18, 0.08])
+
+
+def test_clean_model_plus_noise_map_reproduces_data(tmp_path):
+    """With the noise-map semantics, loading the CLEAN model as the image and the
+    sigma map as noise must reproduce the pre-made observation exactly.  The
+    controller's draw seed equals the example generator's, so
+    ``model_truth + noise.npy == data.npy`` pixel-for-pixel."""
+    from app.controller import LensMovieController
+
+    ctrl = LensMovieController()
+    ctrl.external_array = np.load(mfe.OUT / "model_truth.npy")
+    ctrl.noise_array = np.load(mfe.OUT / "noise.npy")
+    observed = np.asarray(ctrl.observation)
+    data = np.load(mfe.OUT / "data.npy")
+    assert observed.shape == data.shape
+    assert np.allclose(observed, data, atol=1e-9), "seeded draw must match example"
+    # deterministic: repeated reads give the identical array
+    assert ctrl.observation is observed
+    # and swapping the noise map gives a *different* draw
+    ctrl.noise_array = np.full(data.shape, mfe.NOISE_SIGMA * 2.0)
+    assert not np.allclose(ctrl.observation, observed)

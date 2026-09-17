@@ -521,6 +521,60 @@ def test_external_canvas_show_message_resets_colorbar(qapp):
     cv.deleteLater()
 
 
+def test_observation_gains_noise_when_sigma_map_loaded(qapp, tmp_path):
+    """The displayed image is the clean model until a noise (sigma) map is
+    loaded; then a stable Gaussian realisation is added to what is shown."""
+    from app.main_window import MainWindow
+
+    sigma = 0.05
+    clean = np.zeros((60, 60))
+    clean_path = tmp_path / "clean.npy"
+    np.save(clean_path, clean)
+    noise_path = tmp_path / "sigma.npy"
+    np.save(noise_path, np.full_like(clean, sigma))
+
+    win = MainWindow()
+    win.show()
+    qapp.processEvents()
+    assert win.load_external_image_file(str(clean_path)) is True
+    # no noise map -> shown image is the clean image, unchanged
+    assert np.allclose(win._external_array, clean)
+    assert "noise" not in win._ext_label.text()
+
+    win.controller.load_aux("noise", str(noise_path))
+    win._rerender()                      # the real "Load noise" flow reschedules
+    qapp.processEvents()
+    obs = np.asarray(win._external_array)
+    assert obs.shape == clean.shape
+    assert obs is win._external_array              # cached, deterministic
+    resid = obs - clean
+    assert abs(resid.std() - sigma) < 0.01 * sigma
+    assert "noise" in win._ext_label.text()
+    win.close()
+    win.deleteLater()
+
+
+def test_fit_data_uses_noisy_observation(qapp):
+    """prepare_fit_data resamples/uses the observation (clean + noise draw), so
+    what is fitted is what is displayed once a noise map is loaded."""
+    from app.controller import LensMovieController
+
+    sigma = 0.02
+    clean = np.zeros((64, 64))
+    ctrl = LensMovieController()
+    ctrl.external_array = clean
+    ctrl.noise_array = np.full_like(clean, sigma)
+    display = {"num_pix": 64, "delta_pix": 0.05, "psf_fwhm": 0.0}
+    fd = ctrl.prepare_fit_data(display)
+    assert fd is not None
+    resid = np.asarray(fd.image) - clean
+    assert abs(resid.std() - sigma) < 0.01 * sigma
+    # without a noise map the fit data is the plain clean image
+    ctrl.noise_array = None
+    fd2 = ctrl.prepare_fit_data(display)
+    assert np.allclose(fd2.image, clean)
+
+
 def test_apply_fitted_config_writes_back_but_respects_locks(qapp):
     """Fitted values reach the sliders; fixed ones are not overwritten."""
     from app import lensing_calc as lc

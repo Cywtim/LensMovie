@@ -4,12 +4,22 @@ A ready-to-fit 150×150 arcsec-lensed image (0.05″/px), rendered by LensMovie'
 own forward model and blurred by a 0.12″ PSF, plus Gaussian noise
 (σ = 0.01).  The exact truth is in `truth.json`.
 
+**Noise semantics (0.11+):** the image you load is treated as the **clean model**.
+Load its σ-map as the noise file and LensMovie shows and fits `clean + noise` —
+a deterministic Gaussian draw from that sigma map (the draw seed matches this
+generator, so `model_truth.npy + noise.npy` reproduces `data.npy` exactly).
+No noise file → the clean image is shown and fitted as-is (chi² is then blocked
+until a sigma map is loaded).
+
 ## How to fit it in the GUI
 
-1. **Load the data**: *Load image…* → `data.npy`
-2. **Load the noise** (chi² needs it): *Load noise…* → `noise.npy`
-   — the map itself drives χ² pixel-by-pixel: there is **no “noise σ” to enter
-   anywhere** (`noise_sigma` in `truth.json` is only documentation).
+1. **Load the data**: *Load image…* → `model_truth.npy` (the noise-free model)
+2. **Load the noise** (chi² needs it *and* adds the noise to the image):
+   *Load noise…* → `noise.npy` (a constant 1-σ = 0.01 map; the "data" panel now
+   shows the noisy observation ≡ `data.npy`).
+   - `data.npy` is that same observation pre-rolled; load it only as a visual
+     reference — if you load it *as the image* AND the σ-map, the noise is added
+     again (double noise).
 3. **PSF**: either *Load PSF…* → `psf_kernel.npy`, or set the display "
 "**PSF FWHM = 0.12″** (same kernel, reconstructed analytically).
    Unlike the noise, the PSF **must be set**: the data was blurred with it, so

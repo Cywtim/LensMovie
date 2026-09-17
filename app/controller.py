@@ -33,6 +33,10 @@ from . import lensing_calc as lc
 
 
 class LensMovieController(QObject):
+    #: Seed for the synthesised noise realisation.  Chosen to match the example
+    #: generator (tools/make_fit_example.py, SEED=11): clean image + noise.npy
+    #: reproduces examples/fit/data.npy exactly.
+    _OBS_NOISE_SEED = 11
     """Owns program state and drives long-running work off the UI thread.
 
     All signals are emitted on the GUI thread (the worker marshals its own
@@ -63,6 +67,35 @@ class LensMovieController(QObject):
         self.ext_desc = "no file loaded"
 
         self._fit_worker = None     # FitWorker while a fit is running
+
+        # Cache for the synthesised noisy observation (see ``observation``).
+        self._obs_key = None
+        self._obs = None
+
+    @property
+    def observation(self):
+        """The effective observation shown and fitted.
+
+        No noise map -> the loaded image as-is. With a noise map -> the loaded
+        image PLUS a stable Gaussian noise realisation drawn from that sigma map,
+        so the display shows the full noise and the fit is done on the same noisy
+        image (the sigma map stays the chi² weight).  The draw is deterministic
+        (fixed seed) and cached until the image or noise map is replaced.
+        """
+        if self.external_array is None:
+            return None
+        if self.noise_array is None:
+            return self.external_array
+        if self.noise_array.shape != self.external_array.shape:
+            return self.external_array   # mismatch surfaces in prepare_fit_data
+        key = (id(self.external_array), id(self.noise_array))
+        if self._obs_key != key:
+            sig = np.asarray(self.noise_array, dtype=float)
+            rng = np.random.RandomState(self._OBS_NOISE_SEED)
+            draw = np.where(sig > 0.0, rng.normal(0.0, 1.0, sig.shape) * sig, 0.0)
+            self._obs = np.asarray(self.external_array, dtype=float) + draw
+            self._obs_key = key
+        return self._obs
 
     # ------------------------------------------------------------ data files
     def load_external(self, path: str):
@@ -123,7 +156,7 @@ class LensMovieController(QObject):
             return None
         try:
             self.fit_data = prepare_fit_data(
-                self.external_array,
+                self.observation,
                 source_delta_pix=display["delta_pix"],
                 model_num_pix=display["num_pix"],
                 model_delta_pix=display["delta_pix"],

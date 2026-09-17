@@ -326,7 +326,10 @@ class MainWindow(QMainWindow):
     # the controller, so the two halves share no mutable state directly.
     @property
     def _external_array(self):
-        return self.controller.external_array
+        # The displayed image is the observation: the loaded (clean) image plus
+        # the noise realisation drawn from the loaded noise map, when one is set
+        # (see ``controller.observation``).  With no noise map it is unchanged.
+        return self.controller.observation
 
     @_external_array.setter
     def _external_array(self, value):
@@ -449,13 +452,15 @@ class MainWindow(QMainWindow):
             return False
 
         display = self.display_bar.display()
+        observed = self.controller.observation    # clean + noise draw if loaded
         self.external_canvas.update_external(
-            array,
-            title=f"External image {array.shape[0]}x{array.shape[1]}",
+            observed,
+            title=f"External image {observed.shape[0]}x{observed.shape[1]}",
             colormap=display["colormap"],
             stretch=display["stretch"],
         )
-        self._ext_label.setText(desc)
+        note = " (+ noise from the loaded noise map)"
+        self._ext_label.setText(f"{desc}{note if self.controller.noise_array is not None else ''}")
         self.statusBar().showMessage(f"loaded {desc}", 4000)
         return True
 
@@ -538,7 +543,10 @@ class MainWindow(QMainWindow):
             title=f"External image {self._external_array.shape[0]}"
                   f"x{self._external_array.shape[1]}",
             colormap=cmap, stretch=stretch)
-        self._ext_label.setText(getattr(self, "_ext_desc", "no file loaded"))
+        desc = getattr(self, "_ext_desc", "no file loaded")
+        if self.controller.noise_array is not None:
+            desc += " (+ noise)"
+        self._ext_label.setText(desc)
 
     # ------------------------------------------------------------ fitting
     def _start_fit(self):
