@@ -770,6 +770,8 @@ class FitBar(QWidget):
 
     fitRequested = pyqtSignal()
     cancelRequested = pyqtSignal()
+    saveResultRequested = pyqtSignal()
+    saveChainRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -818,6 +820,23 @@ class FitBar(QWidget):
         )
         self._preview_chk.toggled.connect(self._preview_interval.setEnabled)
 
+        # Export after a finished fit.  "Save fit" writes the data|model|residual
+        # report PNG; "Save chain" writes the fitted parameter chain (CSV + a
+        # per-parameter trajectory figure).  Both enable once a fit succeeded.
+        self._save_result_btn = QPushButton("Save fit…")
+        self._save_result_btn.setEnabled(False)
+        self._save_result_btn.setToolTip(
+            "Save a data | model | residual report PNG with the χ² before/after"
+        )
+        self._save_result_btn.clicked.connect(self.saveResultRequested)
+        self._save_chain_btn = QPushButton("Save chain…")
+        self._save_chain_btn.setEnabled(False)
+        self._save_chain_btn.setToolTip(
+            "Save the fitted parameter chain (iteration, χ², each free "
+            "parameter) as CSV plus a trajectory figure PNG"
+        )
+        self._save_chain_btn.clicked.connect(self.saveChainRequested)
+
         lay.addWidget(self._fit_btn)
         lay.addWidget(self._cancel_btn)
         lay.addSpacing(8)
@@ -830,6 +849,9 @@ class FitBar(QWidget):
         lay.addSpacing(10)
         lay.addWidget(self._preview_chk)
         lay.addWidget(self._preview_interval)
+        lay.addSpacing(8)
+        lay.addWidget(self._save_result_btn)
+        lay.addWidget(self._save_chain_btn)
         lay.addSpacing(12)
         self._status = QLabel("no fit run yet")
         self._status.setObjectName("fitStatus")
@@ -839,6 +861,13 @@ class FitBar(QWidget):
     def set_running(self, running: bool):
         self._fit_btn.setEnabled(not running)
         self._cancel_btn.setEnabled(running)
+        if running:
+            self.set_has_result(False)
+
+    def set_has_result(self, has: bool):
+        """Enable the export buttons once a successful fit result exists."""
+        self._save_result_btn.setEnabled(has)
+        self._save_chain_btn.setEnabled(has)
 
     def set_status(self, text: str):
         self._status.setText(text)

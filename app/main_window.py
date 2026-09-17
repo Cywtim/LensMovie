@@ -24,6 +24,8 @@ results.  Physics stays in ``lensing_calc`` and all *look & feel* lives in
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 from PyQt5.QtCore import QTimer
 from PyQt5.QtCore import Qt
@@ -35,6 +37,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -171,6 +174,8 @@ class MainWindow(QMainWindow):
         self.fit_bar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.fit_bar.fitRequested.connect(self._start_fit)
         self.fit_bar.cancelRequested.connect(self._cancel_fit)
+        self.fit_bar.saveResultRequested.connect(self._save_fit_report)
+        self.fit_bar.saveChainRequested.connect(self._save_fit_chain)
 
         # Top area: a left column (3D bar + numPix/display row + fitting strip)
         # side by side with the external panel — the panel therefore spans ALL of
@@ -603,6 +608,62 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"fit done: chi2 {result.chi2_before:.4g} -> {result.chi2_after:.4g}", 6000
         )
+        # Show the finished model in the data panel and switch it to the fit
+        # view (the panel currently shows "fitting…" previews).
+        self._ext_mode.setCurrentText("best-fit model")
+        self._rerender()
+        # Fit succeeded -> the export buttons light up (report PNG + chain).
+        self.fit_bar.set_has_result(result.ok)
+
+    def _save_fit_report(self):
+        """Save the fit's data | model | residual report image via a dialog."""
+        result = self.controller.fit_result
+        data = self.controller.fit_data
+        if result is None or data is None or not result.ok:
+            return
+        default = os.path.join(os.getcwd(), "lensmovie_fit_result.png")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save fit result image", default, "PNG image (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        try:
+            from . import export_fit as exp
+            exp.save_fit_report_png(path, data, result)
+        except Exception as exc:
+            QMessageBox.warning(self, "Save failed",
+                                f"Could not save the fit result:\n{exc}")
+            return
+        self.statusBar().showMessage(f"fit result saved: {path}", 6000)
+
+    def _save_fit_chain(self):
+        """Save the fitted parameter chain as CSV (+ trajectory figure PNG)."""
+        result = self.controller.fit_result
+        data = self.controller.fit_data
+        if result is None or data is None or not result.ok:
+            return
+        if not result.chain_iter:
+            self.statusBar().showMessage("no parameter chain recorded", 6000)
+            return
+        default = os.path.join(os.getcwd(), "lensmovie_fit_chain.csv")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save fit parameter chain", default, "CSV file (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        png_path = os.path.splitext(path)[0] + "_trajectories.png"
+        try:
+            from . import export_fit as exp
+            exp.save_chain_csv(path, result)
+            exp.save_chain_png(png_path, result)
+        except Exception as exc:
+            QMessageBox.warning(self, "Save failed",
+                                f"Could not save the parameter chain:\n{exc}")
+            return
+        self.statusBar().showMessage(
+            f"parameter chain saved: {path} (+ {png_path})", 6000)
         self._ext_mode.setCurrentText("best-fit model")
         self._rerender()
 

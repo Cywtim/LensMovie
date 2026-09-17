@@ -48,6 +48,13 @@ Single-window layout:
   previews off vs 10.0–10.3 s at every 0.1–2 s, i.e. within run-to-run noise), so
   it can normally be left on; uncheck it on a slow machine for the guaranteed
   minimum work.
+  - **Export the fit** (two buttons light up on the strip after a successful
+    fit): **“Save fit…”** writes a dark-theme **data | model | residual** report
+    PNG with the χ² before/after; **“Save chain…”** writes the **parameter
+    chain** — one row per swarm iteration with the χ² and every free parameter
+    (CSV) plus a per-parameter trajectory figure (PNG), so you can see exactly
+    how each fitted value converged. The chain is recorded by the fit loop
+    independently of the (optional) image previews, so it is always available.
 - **Fit-data layer** (inputs for the fit):
   - **pixel scale** (`arcsec/px`) is a control in the display strip and drives the
     model grid, so model and data can share one grid.

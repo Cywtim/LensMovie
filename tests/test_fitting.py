@@ -258,6 +258,18 @@ def test_run_pso_emits_converging_previews():
     assert res.chi2_after < res.chi2_before
     assert res.chi2_after <= min(chi2s) + 1e-6
 
+    # The parameter chain is recorded independently of the (throttled) previews:
+    # one sample per swarm iteration, every free parameter present, chi2 of the
+    # global best monotonically non-increasing. (The swarm may early-stop on
+    # convergence, so only a minimum length is guaranteed.)
+    assert len(res.chain_iter) >= 5, "expected at least several chain samples"
+    assert len(res.chain_chi2) == len(res.chain_iter)
+    assert "lens0.theta_E" in res.chain
+    assert len(res.chain["lens0.theta_E"]) == len(res.chain_iter)
+    assert all(np.isfinite(c) for c in res.chain_chi2)
+    assert all(b <= a + 1e-6 for a, b in
+               zip(res.chain_chi2, res.chain_chi2[1:]))
+
 
 @pytest.mark.slow
 def test_preview_failure_does_not_break_the_fit():

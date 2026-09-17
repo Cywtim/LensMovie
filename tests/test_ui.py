@@ -720,6 +720,18 @@ def test_ticks_stay_inside_the_data_range(qapp):
     win.deleteLater()
 
 
+def _settle(qapp, widget, max_rounds=60):
+    """Pump events until a widget's size stops changing (offscreen layout takes
+    a variable number of passes, especially in long test sessions)."""
+    last = (-1, -1)
+    for _ in range(max_rounds):
+        qapp.processEvents()
+        size = (widget.width(), widget.height())
+        if size == last:
+            return
+        last = size
+
+
 def test_axes_fill_the_widget_binding_dimension(qapp):
     """The square sky field stays square on screen and leaves a safe ~10%
     margin for title / labels / colourbar in every cell aspect.
@@ -734,9 +746,9 @@ def test_axes_fill_the_widget_binding_dimension(qapp):
     win = MainWindow()
     win.resize(1500, 1050)
     win.show()
-    qapp.processEvents()
+    _settle(qapp, win)
     win._rerender()
-    qapp.processEvents()
+    _settle(qapp, win)
 
     for cname in ("fermat_canvas", "image_canvas", "delay_canvas", "curves_canvas"):
         c = getattr(win, cname)

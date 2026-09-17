@@ -53,6 +53,13 @@ class FitResult:
     fixed_names: list = field(default_factory=list)
     error: str = ""
     log: list = field(default_factory=list)
+    # Parameter chain of the best restart: one entry per swarm iteration giving
+    # the global-best value of every free parameter (name -> values, aligned
+    # with chain_iter) plus the estimated chi2 at that iteration.  Recorded by
+    # the fit loop independently of the (throttled, optional) image preview.
+    chain_iter: list = field(default_factory=list)
+    chain_chi2: list = field(default_factory=list)
+    chain: dict = field(default_factory=dict)
 
     def improved(self) -> bool:
         return self.ok and self.chi2_after < self.chi2_before
@@ -536,16 +543,90 @@ def model_config_from_result(config: lc.Config, kwargs_result: dict,
     )
 
 
+def _chain_values(config: lc.Config, kw: dict, free_names: list) -> dict:
+    """Extract a numeric value per free parameter from one lenstronomy kwargs
+    result (the swarm's global best at a given iteration).
+
+    ``free_names`` come from the ``_*_entries`` builders; ``kw`` is the
+    bijective kwargs mapping of the current position.  Lens / source / lens-light
+    values are read through :func:`model_config_from_result`'s round-trip to the
+    app Config (exact for those); point-source *image positions*
+    (``pointN.ra_image[k]`` / ``dec_image[k]``) live only in the image-plane
+    kwargs, so those are read from ``kwargs_ps`` directly.  Unresolvable names
+    yield NaN rather than raising, so one bad key cannot kill the chain.
+    """
+    kw_ll = kw.get("kwargs_lens_light") or []
+    kw_ps = kw.get("kwargs_ps") or []
+
+    def light_lens(j: int):
+        """The j-th lens that actually emits light (matches _lens_light_entries)."""
+        n = -1
+        for lens in config.lenses:
+            if lens.has_light():
+                n += 1
+                if n == j:
+                    return lens
+        return None
+
+    # kwargs (fitted) name -> LensParams field, for lens light.
+    _LIGHT_FIELD = {"amp": "light_amp", "R_sersic": "light_R_sersic",
+                    "n_sersic": "light_n_sersic", "sigma": "light_sigma",
+                    "e1": "light_e1", "e2": "light_e2"}
+
+    values = {}
+    for name in free_names:
+        values[name] = float("nan")
+        try:
+            if name.startswith("lens_light"):
+                j = int(name[len("lens_light"):name.index(".")])
+                key = name[name.index(".") + 1:]
+                arr = kw_ll[j] if j < len(kw_ll) else None
+                if arr is not None and key in arr:
+                    values[name] = float(arr[key])
+                else:
+                    lens = light_lens(j)
+                    if lens is not None:
+                        values[name] = float(getattr(lens, _LIGHT_FIELD.get(key, key)))
+            elif name.startswith("lens"):
+                i = int(name[4:name.index(".")])
+                key = name[name.index(".") + 1:]
+                values[name] = float(getattr(config.lenses[i], key))
+            elif name.startswith("source"):
+                i = int(name[6:name.index(".")])
+                key = name[name.index(".") + 1:]
+                values[name] = float(getattr(config.sources[i], key))
+            elif name.startswith("point"):
+                spec = name[name.index(".") + 1:]
+                i = int(name[5:name.index(".")])
+                if spec.startswith("ra_image") or spec.startswith("dec_image"):
+                    head = spec.split("[", 1)[0]
+                    k = int(spec[spec.index("[") + 1:spec.index("]")])
+                    arr = (kw_ps[i] or {}).get(head) or []
+                    if k < len(arr):
+                        values[name] = float(arr[k])
+                else:
+                    values[name] = float(getattr(config.point_sources[i], spec))
+        except Exception:
+            pass       # keep NaN for this name
+    return values
+
+
 def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
                             n_particles, n_iterations, sigma_scale,
-                            attempt, attempts, say, preview, preview_interval):
+                            attempt, attempts, say, preview, preview_interval,
+                            free_names):
     """Drive lenstronomy's PSO one iteration at a time, reporting progress.
 
     ``FittingSequence.fit_sequence([['PSO', ...]])`` runs the whole swarm in one
     blocking call with no hook, so the swarm is driven directly through
     ``ParticleSwarmOptimizer.sample()`` (the very generator that
     ``FittingSequence.pso`` consumes). The starting bounds are built exactly as
-    ``FittingSequence.pso`` builds them. Returns the best-fit kwargs dict.
+    ``FittingSequence.pso`` builds them.
+
+    Every iteration the global-best position is also recorded into the returned
+    ``samples`` list (iteration, chi2 estimate, per-free-parameter values), so a
+    *parameter chain* is available for export even when image previews are off.
+    Returns ``(best-fit kwargs dict, samples)``.
     """
     import time
 
@@ -569,28 +650,31 @@ def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
     best_pos = init_pos
     last_preview = 0.0
     offset = None      # maps lenstronomy's logL onto our chi2 scale
+    samples = []       # (iteration, chi2_est, {free_name: value})
     for it, _ in enumerate(swarm.sample(max_iter=int(n_iterations), verbose=False)):
         best_pos = swarm.global_best.position
+
+        # Chain bookkeeping first (cheap, needs no rendering): convert the
+        # current global best back to kwargs, then to the app Config so every
+        # free parameter can be read by name.
+        kw_i = param_class.args2kwargs(best_pos, bijective=True)
+        cfg_i = model_config_from_result(config, kw_i, data.num_pix,
+                                         ref_source_index)
+        logl = float(swarm.global_best.fitness)
+        if offset is None:
+            try:
+                offset = fd.chi2(lc.render_image(cfg_i), data) + 2.0 * logl
+            except Exception:
+                offset = 0.0
+        chi2_i = -2.0 * logl + offset
+        vals = _chain_values(cfg_i, kw_i, free_names)
+        samples.append((it + 1, chi2_i, vals))
 
         now = time.time()
         if preview is not None and (now - last_preview) >= float(preview_interval):
             last_preview = now
             try:
-                kw_i = param_class.args2kwargs(best_pos, bijective=True)
-                cfg_i = model_config_from_result(config, kw_i, data.num_pix,
-                                                 ref_source_index)
                 image_i = lc.render_image(cfg_i)
-
-                # Report the fitter's OWN objective rather than recomputing it:
-                # the swarm's global best is monotonic by construction, whereas a
-                # recomputed chi2 (different noise/mask handling inside
-                # lenstronomy's likelihood) can wobble. logL = -chi2/2 up to a
-                # constant, calibrated on the first preview so the numbers are
-                # comparable with the final chi2.
-                logl = float(swarm.global_best.fitness)
-                if offset is None:
-                    offset = fd.chi2(image_i, data) + 2.0 * logl
-                chi2_i = -2.0 * logl + offset
                 preview(it + 1, int(n_iterations), chi2_i, image_i)
             except Exception:
                 pass      # a preview must never break the fit
@@ -598,7 +682,7 @@ def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
     say(f"restart {attempt + 1}/{attempts}: swarm finished "
         f"({int(n_iterations)} iterations)")
 
-    return param_class.args2kwargs(best_pos, bijective=True)
+    return param_class.args2kwargs(best_pos, bijective=True), samples
 
 
 def run_pso(
@@ -662,7 +746,7 @@ def run_pso(
 
     from lenstronomy.Workflow.fitting_sequence import FittingSequence
 
-    best = None          # (chi2, config, kwargs_result)
+    best = None          # (chi2, config, kwargs_result, samples)
     last_error = ""
     attempts = max(1, int(n_restarts))
     for attempt in range(attempts):
@@ -672,12 +756,13 @@ def run_pso(
                 {"image_likelihood": True, "check_bounds": True},
                 kwargs_params, verbose=False,
             )
-            kw_res = _run_swarm_with_preview(
+            kw_res, samples = _run_swarm_with_preview(
                 fs, config, data, ref_source_index,
                 n_particles=int(n_particles), n_iterations=int(n_iterations),
                 sigma_scale=float(sigma_scale), attempt=attempt,
                 attempts=attempts, say=say,
                 preview=preview, preview_interval=preview_interval,
+                free_names=free_names,
             )
             if polish:
                 # Refine the swarm's best solution; this is what makes the fit
@@ -694,7 +779,7 @@ def run_pso(
             chi2_i = fd.chi2(lc.compute(cfg_i).image, data)
             say(f"restart {attempt + 1}/{attempts}: chi2 = {chi2_i:.4g}")
             if best is None or chi2_i < best[0]:
-                best = (chi2_i, cfg_i, kw_res)
+                best = (chi2_i, cfg_i, kw_res, samples)
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             say(f"restart {attempt + 1}/{attempts} failed: {last_error}")
@@ -703,9 +788,16 @@ def run_pso(
         return FitResult(ok=False, error=last_error or "fit failed", log=log,
                          chi2_before=chi2_before)
 
-    chi2_after, new_config, _ = best
+    chi2_after, new_config, _, samples = best
     model_after = lc.compute(new_config).image
     say(f"chi2 (best fit) = {chi2_after:.4g}")
+
+    # Fan the best restart's per-iteration (iteration, chi2, values) samples out
+    # into columnar chain data for the parameter-chain export.
+    chain_iter = [s[0] for s in samples]
+    chain_chi2 = [s[1] for s in samples]
+    chain = {name: [s[2].get(name, float("nan")) for s in samples]
+             for name in free_names}
 
     ndof = data.usable_pixels() - len(free_names)
     return FitResult(
@@ -720,4 +812,7 @@ def run_pso(
         free_names=free_names,
         fixed_names=fixed_names,
         log=log,
+        chain_iter=chain_iter,
+        chain_chi2=chain_chi2,
+        chain=chain,
     )
