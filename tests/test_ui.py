@@ -475,6 +475,52 @@ def test_external_display_modes_without_fit(qapp):
     win.deleteLater()
 
 
+def test_load_clear_load_does_not_crash(qapp, tmp_path):
+    """Regression: Clear reset the colourbar state incompletely, so a load after
+    a clear hit ``_add_colorbar`` with ``_cax`` set but ``_cb = None`` and raised
+    (which showed up as a hard crash from the Qt slot)."""
+    from app.main_window import MainWindow
+
+    path = tmp_path / "img.npy"
+    np.save(path, np.random.RandomState(0).rand(70, 70))
+
+    win = MainWindow()
+    win.show()
+    qapp.processEvents()
+
+    for expected_title in ("External image 70x70", "External image 70x70"):
+        assert win.load_external_image_file(str(path)) is True
+        assert win.external_canvas._im is not None
+        qapp.processEvents()
+    # clear -> show placeholder
+    win._clear_external_image()
+    qapp.processEvents()
+    assert win.external_canvas._im is None
+    # load again -> must not raise / crash and must draw again
+    assert win.load_external_image_file(str(path)) is True
+    qapp.processEvents()
+    assert win.external_canvas._im is not None
+    assert win.external_canvas._cb is not None
+    win.close()
+    win.deleteLater()
+
+
+def test_external_canvas_show_message_resets_colorbar(qapp):
+    """update_external -> show_message -> update_external must rebuild a fresh
+    colourbar without a stale ``_cax``/``_cb`` mismatch."""
+    from app.plotting import ExternalCanvas
+
+    cv = ExternalCanvas()
+    arr = np.random.RandomState(1).rand(40, 40)
+    cv.update_external(arr)
+    assert cv._cax is not None and cv._cb is not None
+    cv.show_message("empty")
+    assert cv._cb is None and cv._cax is None and cv._im is None
+    cv.update_external(arr)                # previously raised AttributeError
+    assert cv._cax is not None and cv._cb is not None
+    cv.deleteLater()
+
+
 def test_apply_fitted_config_writes_back_but_respects_locks(qapp):
     """Fitted values reach the sliders; fixed ones are not overwritten."""
     from app import lensing_calc as lc

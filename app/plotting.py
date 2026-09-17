@@ -162,8 +162,17 @@ class _MplCanvas(FigureCanvas):
 
     def _add_colorbar(self, mappable):
         """Attach a colorbar in its own axes, leaving the main axes geometry
-        untouched so panels stay aligned."""
-        if self._cax is None:
+        untouched so panels stay aligned.
+
+        ``_cax`` / ``_cb`` are reset together (e.g. by :meth:`ExternalCanvas.
+        show_message`); if only one is stale, the old colourbar axes is dropped
+        and a fresh one is built rather than crashing."""
+        if self._cax is None or self._cb is None:
+            if self._cax is not None:
+                try:
+                    self._figure.delaxes(self._cax)
+                except Exception:
+                    pass
             self._cax = self._figure.add_axes(_CBAR_RECT)
             self._cb = self._figure.colorbar(mappable, cax=self._cax)
             self._cb.outline.set_edgecolor(theme.CANVAS_STYLE["spine"])
@@ -385,6 +394,12 @@ class ExternalCanvas(_MplCanvas):
     def _show_message(self, text):
         if self._im is not None:
             self._im = None
+            if self._cax is not None:
+                try:
+                    self._figure.delaxes(self._cax)
+                except Exception:
+                    pass
+            self._cax = None
             self._cb = None
             self._ax.clear()
             self._style_axes("External image")
