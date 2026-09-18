@@ -363,14 +363,18 @@ def _build_data_joint(config: lc.Config, data: fd.FitData):
     num_pix, delta = data.num_pix, data.delta_pix
     x_grid, y_grid = util.make_grid(num_pix, delta)
 
+    # The effective sigma (noise ⊕ psf error in quadrature) is fed to
+    # lenstronomy as the noise_map, so the swarm optimises exactly the same
+    # chi² that the app reports via fd.chi2 (lenstronomy: C_D = noise_map²).
+    eff_noise = fd.effective_noise(data)
     kwargs_data = {
         "image_data": np.asarray(data.image, dtype=float),
-        "noise_map": np.asarray(data.noise, dtype=float),
+        "noise_map": np.asarray(eff_noise, dtype=float),
         "ra_at_xy_0": x_grid[0],
         "dec_at_xy_0": y_grid[0],
         "transform_pix2angle": np.array([[delta, 0], [0, delta]]),
         "exposure_time": 1.0,
-        "background_rms": float(np.median(data.noise)),
+        "background_rms": float(np.median(eff_noise)),
     }
     if data.mask is not None:
         kwargs_data["likelihood_mask"] = np.asarray(data.mask, dtype=bool)

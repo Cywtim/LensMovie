@@ -161,3 +161,57 @@ def test_unnormalised_psf_kernel_cannot_rescale_brightness():
     assert np.isclose(scaled.image.max(), lc.compute(
         lc.Config(num_pix=90, psf_kernel=k)).image.max(), rtol=1e-6)
     assert scaled.image.max() < base.image.max()   # blurred, but not rescaled
+
+
+# ------------------------------------------------------- psf error map (quadrature)
+def test_psf_error_map_carried_and_resampled():
+    img = np.arange(100.0).reshape(10, 10)
+    noise = np.full((10, 10), 0.1)
+    psf = np.full((10, 10), 0.3)
+    d = fd.prepare_fit_data(img, source_delta_pix=0.05, model_num_pix=10,
+                            model_delta_pix=0.05, noise=noise, psf_error=psf)
+    assert d.psf_error is not None
+    assert np.allclose(d.psf_error, 0.3)
+    assert fd.effective_noise(d) is not None
+    assert np.allclose(fd.effective_noise(d), np.sqrt(0.1 ** 2 + 0.3 ** 2))
+
+
+def test_effective_noise_without_psf_error_is_noise():
+    img = np.ones((8, 8))
+    noise = np.full((8, 8), 0.05)
+    d = fd.prepare_fit_data(img, source_delta_pix=0.05, model_num_pix=8,
+                            model_delta_pix=0.05, noise=noise)
+    assert np.allclose(fd.effective_noise(d), noise)
+
+
+def test_chi2_uses_effective_noise_including_psf_error():
+    """lenstronomy adds model/PSF uncertainty to the variance; chi² must use
+    σ_eff = sqrt(σ² + σ_psf²), so a PSF error map lowers (divides out) χ²."""
+    data = np.zeros((4, 4))
+    model = np.zeros((4, 4))
+    model[1, 1] = 1.0
+    d_no_bg = fd.FitData(image=data, delta_pix=0.05)
+    d = fd.FitData(image=data, delta_pix=0.05, noise=np.full((4, 4), 0.1))
+    d_psf = fd.FitData(image=data, delta_pix=0.05, noise=np.full((4, 4), 0.1),
+                       psf_error=np.full((4, 4), 0.1))
+    chi2_no = fd.chi2(model, d)
+    chi2_psf = fd.chi2(model, d_psf)
+    assert np.isfinite(chi2_no) and np.isfinite(chi2_psf)
+    # same residual, wider effective sigma -> smaller chi², by exactly 0.5x
+    assert chi2_psf == pytest.approx(chi2_no * 0.5)
+    # without any noise map chi² is still refused
+    with pytest.raises(fd.DataPrepError):
+        fd.chi2(model, d_no_bg)
+
+
+def test_psf_error_invalid_pixels_zeroed():
+    img = np.ones((6, 6))
+    psf = np.full((6, 6), 0.2)
+    psf[0, 0] = -1.0
+    psf[1, 1] = np.nan
+    d = fd.prepare_fit_data(img, source_delta_pix=0.05, model_num_pix=6,
+                            model_delta_pix=0.05, noise=np.full((6, 6), 0.1),
+                            psf_error=psf)
+    assert d.psf_error[0, 0] == 0.0 and np.isfinite(d.psf_error[1, 1])
+    assert d.psf_error[1, 1] == 0.0
+    assert np.allclose(d.psf_error[2:, 2:], 0.2)

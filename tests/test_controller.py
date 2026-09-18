@@ -57,6 +57,22 @@ def test_controller_prepares_fit_data(ctrl):
     assert ctrl.fit_data is fd
 
 
+def test_controller_psf_error_flows_into_fit_data(ctrl, tmp_path):
+    from app import fit_data as fdm
+
+    ctrl.external_array = np.random.RandomState(1).rand(32, 32)
+    ctrl.noise_array = np.full((32, 32), 0.05)
+    np.save(tmp_path / "psf_err.npy", np.full((32, 32), 0.02))
+    _, desc = ctrl.load_aux("psf_error", str(tmp_path / "psf_err.npy"))
+    assert ctrl.psf_error_array is not None
+    display = {"num_pix": 32, "delta_pix": 0.05, "psf_fwhm": 0.0}
+    fd = ctrl.prepare_fit_data(display)
+    assert fd.psf_error is not None
+    assert np.allclose(fd.psf_error, 0.02)
+    eff = fdm.effective_noise(fd)
+    assert np.allclose(eff, np.sqrt(0.05 ** 2 + 0.02 ** 2))
+
+
 def test_controller_prepare_fit_data_none_without_image(ctrl):
     ctrl.external_array = None
     assert ctrl.prepare_fit_data({}) is None

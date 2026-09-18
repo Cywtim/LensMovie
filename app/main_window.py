@@ -381,6 +381,14 @@ class MainWindow(QMainWindow):
         self.controller.psf_kernel = value
 
     @property
+    def _psf_error_array(self):
+        return self.controller.psf_error_array
+
+    @_psf_error_array.setter
+    def _psf_error_array(self, value):
+        self.controller.psf_error_array = value
+
+    @property
     def _fit_data(self):
         return self.controller.fit_data
 

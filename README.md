@@ -76,6 +76,12 @@ Single-window layout:
     blocked.
   - **Load mask** (same-shape file) for a proper chi-squared likelihood (kept
     pixels only; reported in the “on model grid” summary).
+  - **Load PSF err** (a per-pixel 1-sigma PSF-model-error map): combined with the
+    noise in **quadrature** into the effective chi² sigma — the same variance-
+    addition semantics as lenstronomy's `C_D + |error_map|`.  Feed a map when the
+    PSF is uncertain (e.g. from `psf_error_map` conventions) so the fit over-
+    weights poorly-known PSF regions less.  Without it the effective sigma is
+    exactly the noise map.
   - **“preview on model grid”** resamples the loaded data onto the model grid
     (pixel scale + centre) so the alignment can be verified; the label then
     reports the grid, resampling, noise, mask coverage and PSF.

@@ -483,3 +483,40 @@ def test_build_setup_includes_point_sources():
         [], [], [])
     assert "point_source_model_list" not in kw_model
     assert "point_source_model" not in kw_params
+
+
+def test_build_data_joint_feeds_effective_noise():
+    """The lenstronomy Data the swarm scores uses the effective (quadrature)
+    sigma, identical to what the app's fd.chi2 reports."""
+    from app import fit_data as fdm
+    from app.fitting import build_setup
+    truth = _truth_config()
+    cfg = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=1.10, gamma1=0.04, gamma2=-0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+    )
+    mock = lc.compute(cfg).image
+    rng = np.random.RandomState(3)
+    noise = np.full(mock.shape, 0.002)
+    psf = np.full(mock.shape, 0.001)
+    d = fdm.prepare_fit_data(
+        mock + rng.normal(0, 0.002, mock.shape),
+        source_delta_pix=cfg.delta_pix, model_num_pix=cfg.num_pix,
+        model_delta_pix=cfg.delta_pix, noise=noise, psf_error=psf)
+    kwargs_data_joint, *_ = build_setup(
+        cfg, d, *_specs(cfg, free_lens=("theta_E",)), point_source_specs=[])
+    kd = kwargs_data_joint["multi_band_list"][0][0]
+    assert np.allclose(kd["noise_map"], fdm.effective_noise(d))
+    assert np.allclose(kd["noise_map"], np.sqrt(0.002 ** 2 + 0.001 ** 2))
+    # without the psf error map, the fed noise is exactly the user's noise map
+    d2 = fdm.prepare_fit_data(
+        mock + rng.normal(0, 0.002, mock.shape),
+        source_delta_pix=cfg.delta_pix, model_num_pix=cfg.num_pix,
+        model_delta_pix=cfg.delta_pix, noise=noise)
+    kwargs_data_joint2, *_ = build_setup(cfg, d2, *_specs(cfg, free_lens=("theta_E",)),
+                                         point_source_specs=[])
+    assert np.allclose(kwargs_data_joint2["multi_band_list"][0][0]["noise_map"],
+                       noise)

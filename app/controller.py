@@ -55,6 +55,7 @@ class LensMovieController(QObject):
         # --- program state ------------------------------------------------
         self.external_array: np.ndarray | None = None
         self.noise_array: np.ndarray | None = None
+        self.psf_error_array: np.ndarray | None = None
         self.mask_array: np.ndarray | None = None
         self.psf_kernel: np.ndarray | None = None
         self.fit_data = None        # FitData (resampled data on the model grid)
@@ -85,15 +86,18 @@ class LensMovieController(QObject):
         self.ext_desc = "no file loaded"
 
     def load_aux(self, kind: str, path: str):
-        """Adopt a noise / mask / PSF file.  ``kind`` in (``noise``, ``mask``,
-        ``psf``).  Returns ``(array, description)``; a PSF kernel is normalised
-        to integrate to 1 so it cannot rescale model brightness.
+        """Adopt a noise / psf-error / mask / PSF file.  ``kind`` in (``noise``,
+        ``psf_error``, ``mask``, ``psf``).  Returns ``(array, description)``; a
+        PSF kernel is normalised to integrate to 1 so it cannot rescale model
+        brightness.
         """
         from .external_image import load_image_file
 
         array, desc = load_image_file(path)
         if kind == "noise":
             self.noise_array = array
+        elif kind == "psf_error":
+            self.psf_error_array = array
         elif kind == "mask":
             self.mask_array = np.asarray(array != 0)
         else:  # psf
@@ -129,6 +133,7 @@ class LensMovieController(QObject):
                 model_delta_pix=display["delta_pix"],
                 center_offset=self.center_offset,
                 noise=self.noise_array,
+                psf_error=self.psf_error_array,
                 mask=self.mask_array,
                 psf_kernel=self.psf_kernel,
                 psf_fwhm=display["psf_fwhm"],

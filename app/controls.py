@@ -734,7 +734,7 @@ class DataBar(QWidget):
 
     loadImageRequested = pyqtSignal()
     clearRequested = pyqtSignal()
-    loadAuxRequested = pyqtSignal(str)      # "noise" | "mask" | "psf"
+    loadAuxRequested = pyqtSignal(str)      # "noise" | "psf_error" | "mask" | "psf"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -752,16 +752,18 @@ class DataBar(QWidget):
         self._noise_btn = QPushButton("Noise…")
         self._mask_btn = QPushButton("Mask…")
         self._psf_btn = QPushButton("PSF…")
+        self._psf_err_btn = QPushButton("PSF err…")
         for kind, btn in (("noise", self._noise_btn), ("mask", self._mask_btn),
-                          ("psf", self._psf_btn)):
-            btn.setToolTip(
-                ("Load the PSF kernel" if kind == "psf" else f"Load the {kind} map")
-                + " (same shape as the image; npy/fits/…)"
-            )
+                          ("psf", self._psf_btn),
+                          ("psf_error", self._psf_err_btn)):
+            tip = ("Load the PSF kernel" if kind == "psf"
+                   else ("Load a 1-sigma PSF-model-error map" if kind == "psf_error"
+                         else f"Load the {kind} map"))
+            btn.setToolTip(tip + " (same shape as the image; npy/fits/…)")
             btn.clicked.connect(lambda _=False, k=kind: self.loadAuxRequested.emit(k))
 
         for b in (self._load_btn, self._clear_btn, self._noise_btn,
-                  self._mask_btn, self._psf_btn):
+                  self._mask_btn, self._psf_btn, self._psf_err_btn):
             lay.addWidget(b)
 
 

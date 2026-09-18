@@ -26,6 +26,7 @@ class FitData:
     image: np.ndarray                     # data on the model grid
     delta_pix: float                      # arcsec / pixel of the grid
     noise: Optional[np.ndarray] = None    # 1-sigma map, same shape as image
+    psf_error: Optional[np.ndarray] = None  # 1-sigma PSF-model-error map
     mask: Optional[np.ndarray] = None     # bool; True = pixel used in the fit
     psf_kernel: Optional[np.ndarray] = None
     psf_fwhm: float = 0.0
@@ -101,6 +102,7 @@ def prepare_fit_data(
     model_delta_pix: float,
     center_offset=(0.0, 0.0),
     noise: Optional[np.ndarray] = None,
+    psf_error: Optional[np.ndarray] = None,
     mask: Optional[np.ndarray] = None,
     psf_kernel: Optional[np.ndarray] = None,
     psf_fwhm: float = 0.0,
@@ -115,6 +117,8 @@ def prepare_fit_data(
         center_offset: (dx, dy) arcsec of the lens centre within the data; the
             resampled grid is centred there.
         noise: optional 1-sigma map (same shape as ``image``).
+        psf_error: optional 1-sigma PSF-model-error map (same shape); combined
+            with ``noise`` in quadrature into the effective per-pixel sigma.
         mask: optional boolean map (same shape as ``image``), True = keep.
         psf_kernel: optional convolution kernel (already at model_delta_pix).
         psf_fwhm: Gaussian FWHM in arcsec; used only if no kernel is given.
@@ -173,6 +177,9 @@ def prepare_fit_data(
         return out
 
     grid_noise = _bring(noise, "noise") if noise is not None else None
+    grid_psf_err = (
+        _bring(psf_error, "psf error") if psf_error is not None else None
+    )
     grid_mask = _bring(mask, "mask", dtype=bool) if mask is not None else None
 
     if grid_noise is not None:
@@ -182,6 +189,13 @@ def prepare_fit_data(
             if grid_mask is None:
                 grid_mask = np.ones(grid_image.shape, dtype=bool)
             grid_mask[bad] = False
+
+    if grid_psf_err is not None:
+        badp = (~np.isfinite(grid_psf_err)) | (grid_psf_err < 0)
+        if badp.any():
+            grid_psf_err = np.where(badp, 0.0, grid_psf_err)
+            notes.append(
+                f"psf error: {int(badp.sum())} invalid pixel(s) set to 0")
 
     if psf_kernel is not None:
         psf_kernel = np.asarray(psf_kernel, dtype=float)
@@ -198,6 +212,7 @@ def prepare_fit_data(
         image=grid_image,
         delta_pix=float(model_delta_pix),
         noise=grid_noise,
+        psf_error=grid_psf_err,
         mask=grid_mask,
         psf_kernel=psf_kernel,
         psf_fwhm=float(psf_fwhm or 0.0),
@@ -217,6 +232,20 @@ def effective_psf_kernel(data: FitData) -> np.ndarray:
     return gaussian_psf_kernel(data.psf_fwhm, data.delta_pix)
 
 
+def effective_noise(data: FitData) -> Optional[np.ndarray]:
+    """The per-pixel sigma used in the fit: noise and PSF-model error combined
+    in quadrature (like lenstronomy's ``C_D + |error_map|`` variance addition).
+    Without a PSF error map this is just the noise map.
+    """
+    if data.noise is None:
+        return None
+    if data.psf_error is None:
+        return data.noise
+    sig = np.asarray(data.noise, dtype=float)
+    psf = np.asarray(data.psf_error, dtype=float)
+    return np.sqrt(sig * sig + psf * psf)
+
+
 def chi2(model: np.ndarray, data: FitData) -> float:
     """Chi-squared between a model image and the prepared data (needs noise)."""
     if data.noise is None:
@@ -226,7 +255,7 @@ def chi2(model: np.ndarray, data: FitData) -> float:
         raise DataPrepError(
             f"model shape {model.shape} != data shape {data.image.shape}"
         )
-    resid = (model - data.image) / data.noise
+    resid = (model - data.image) / effective_noise(data)
     if data.mask is not None:
         resid = resid[data.mask]
     return float(np.sum(resid ** 2))
