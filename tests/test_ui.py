@@ -432,6 +432,16 @@ def test_fit_bar_settings_and_running_state(qapp):
     bar = FitBar()
     s = bar.settings()
     assert {"n_particles", "n_iterations", "n_restarts"} <= set(s)
+    # early stopping defaults to off (0.0) and is opt-in via the stop-χ²ν check
+    assert "early_stop_reduced" in s and s["early_stop_reduced"] == 0.0
+    assert bar._early_val.isEnabled() is False
+    bar._early_chk.setChecked(True)
+    assert bar._early_val.isEnabled() is True
+    assert bar.settings()["early_stop_reduced"] == pytest.approx(1.0)
+    bar._early_val.setValue(2.5)
+    assert bar.settings()["early_stop_reduced"] == pytest.approx(2.5)
+    bar._early_chk.setChecked(False)
+    assert bar.settings()["early_stop_reduced"] == 0.0
     assert bar._fit_btn.isEnabled() is True
     bar.set_running(True)
     assert bar._fit_btn.isEnabled() is False

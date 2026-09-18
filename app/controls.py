@@ -820,6 +820,25 @@ class FitBar(QWidget):
         )
         self._preview_chk.toggled.connect(self._preview_interval.setEnabled)
 
+        # Early stopping: when enabled, a restart that reaches the target reduced
+        # chi² (χ²/ndof ≤ the value) halts that swarm and skips the remaining
+        # restarts — a converged fit stops instead of burning iterations.
+        self._early_chk = QCheckBox("stop χ²ν ≤")
+        self._early_chk.setToolTip(
+            "Early-stop once a restart reaches this reduced chi² (χ²/DoF):\n"
+            "a converged fit skips the remaining iterations and restarts.\n"
+            "Unchecked = run every iteration and restart (default)."
+        )
+        self._early_val = QDoubleSpinBox()
+        self._early_val.setRange(0.1, 10.0)
+        self._early_val.setDecimals(2)
+        self._early_val.setSingleStep(0.1)
+        self._early_val.setValue(1.0)
+        self._early_val.setToolTip("target reduced chi² for early stopping (\u22481.0 for a good fit to known noise)")
+        self._early_val.setEnabled(False)
+        self._early_chk.toggled.connect(self._early_val.setEnabled)
+
+
         # Export after a finished fit.  "Save fit" writes the data|model|residual
         # report PNG; "Save chain" writes the fitted parameter chain (CSV + a
         # per-parameter trajectory figure).  Both enable once a fit succeeded.
@@ -849,6 +868,9 @@ class FitBar(QWidget):
         lay.addSpacing(10)
         lay.addWidget(self._preview_chk)
         lay.addWidget(self._preview_interval)
+        lay.addSpacing(8)
+        lay.addWidget(self._early_chk)
+        lay.addWidget(self._early_val)
         lay.addSpacing(8)
         lay.addWidget(self._save_result_btn)
         lay.addWidget(self._save_chain_btn)
@@ -882,6 +904,8 @@ class FitBar(QWidget):
             "n_restarts": self._restarts.value(),
             "preview_enabled": self._preview_chk.isChecked(),
             "preview_interval": self._preview_interval.value(),
+            "early_stop_reduced":
+                self._early_val.value() if self._early_chk.isChecked() else 0.0,
         }
 
 

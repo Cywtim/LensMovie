@@ -277,6 +277,46 @@ def test_run_pso_emits_converging_previews():
     assert res.reduced_chi2 == pytest.approx(res.chi2_after / res.ndof)
 
 
+def test_run_pso_early_stop_skips_remaining_restarts():
+    """early_stop_reduced>0 halts once a restart hits the target reduced chi²."""
+    np.random.seed(0)
+    truth = _truth_config()
+    data = _data_for(truth)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=0.85, gamma1=0.04, gamma2=-0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+    )
+    lens_s, ll_s, src_s = _specs(start, free_lens=("theta_E",))
+
+    res = ft.run_pso(
+        start, data, lens_s, ll_s, src_s,
+        n_particles=20, n_iterations=60, n_restarts=3, polish=True,
+        early_stop_reduced=1.5,
+    )
+    assert res.ok, res.error
+    n_restarts_run = sum(1 for m in res.log
+                         if m.startswith("restart ") and ": chi2 = " in m)
+    assert any("skipping remaining restarts" in m for m in res.log), res.log
+    assert n_restarts_run < 3, f"expected some restarts skipped, ran {n_restarts_run}"
+    # the reached solution is at least as good as the (reduced) target
+    assert res.chi2_after <= 1.5 * max(res.ndof, 1)
+    assert res.chi2_after < res.chi2_before
+
+    # control: without early stop every restart runs
+    res2 = ft.run_pso(
+        start, data, lens_s, ll_s, src_s,
+        n_particles=20, n_iterations=60, n_restarts=3, polish=True,
+        early_stop_reduced=0.0,
+    )
+    assert res2.ok
+    n2 = sum(1 for m in res2.log
+             if m.startswith("restart ") and ": chi2 = " in m)
+    assert n2 == 3, f"expected all 3 restarts without early stop, ran {n2}"
+
+
 @pytest.mark.slow
 def test_preview_failure_does_not_break_the_fit():
     """A broken preview callback must be swallowed, not abort the fit."""

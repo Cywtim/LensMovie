@@ -22,7 +22,8 @@ class FitWorker(QThread):
     def __init__(self, config, data, lens_specs, lens_light_specs, source_specs,
                  point_source_specs=None, n_particles=30, n_iterations=100,
                  n_restarts=2, sigma_scale=4.0, polish=True,
-                 preview_enabled=True, preview_interval=0.5, parent=None):
+                 preview_enabled=True, preview_interval=0.5,
+                 early_stop_reduced=0.0, parent=None):
         super().__init__(parent)
         self._args = (config, data, lens_specs, lens_light_specs, source_specs,
                       point_source_specs)
@@ -33,6 +34,7 @@ class FitWorker(QThread):
             n_particles=n_particles, n_iterations=n_iterations,
             n_restarts=n_restarts, sigma_scale=sigma_scale, polish=polish,
             preview_interval=float(preview_interval),
+            early_stop_reduced=float(early_stop_reduced),
         )
         self._cancelled = False
 

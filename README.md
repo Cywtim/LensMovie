@@ -38,8 +38,11 @@ Single-window layout:
   on a **background thread** (the GUI stays responsive) and only the **unlocked 🔓**
   parameters are varied — locked ones are held exactly. On completion the
   best-fit values are written back into the sliders, the strip reports
-  `χ² initial → best (free, ndof)`, and the data panel can show
+  `χ² initial → best (free, ndof) + reduced χ²ν`, and the data panel can show
   **best-fit model** or **residual**.
+  The strip also has an optional **stop χ²ν** control (default off): when enabled,
+  a restart that reaches the target reduced chi² halts the swarm and skips the
+  remaining restarts instead of burning iterations on an already-converged fit.
   **You can watch it converge**: while the swarm runs, the data panel draws the
   current best model live (`fitting… iter i/N`, with the running χ² in the fit
   strip), so a long fit is not a black box. Preview rendering is optional and

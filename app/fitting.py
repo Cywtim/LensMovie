@@ -617,7 +617,7 @@ def _chain_values(config: lc.Config, kw: dict, free_names: list) -> dict:
 def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
                             n_particles, n_iterations, sigma_scale,
                             attempt, attempts, say, preview, preview_interval,
-                            free_names):
+                            free_names, early_stop_chi2=0.0):
     """Drive lenstronomy's PSO one iteration at a time, reporting progress.
 
     ``FittingSequence.fit_sequence([['PSO', ...]])`` runs the whole swarm in one
@@ -668,11 +668,25 @@ def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
     except Exception:
         pass
 
+    # Map lenstronomy's -2*logL onto the app's chi² scale now, so an early-stop
+    # tolerance (a target in app-chi² units) can be given to the swarm in its own
+    # units.  Same construction as the in-loop calibration below.
+    offset0 = None
+    if early_stop_chi2:
+        try:
+            offset0 = fd.chi2(lc.render_image(config), data) + 2.0 * logl0
+        except Exception:
+            offset0 = None
+
     best_pos = init_pos
     last_preview = 0.0
     offset = None      # maps lenstronomy's logL onto our chi2 scale
     samples = []       # (iteration, chi2_est, {free_name: value})
-    for it, _ in enumerate(swarm.sample(max_iter=int(n_iterations), verbose=False)):
+    est = (early_stop_chi2 - offset0) if (early_stop_chi2 and offset0 is not None) \
+        else None
+    for it, _ in enumerate(swarm.sample(
+            max_iter=int(n_iterations), verbose=False,
+            early_stop_tolerance=est)):
         best_pos = swarm.global_best.position
 
         # Chain bookkeeping first (cheap, needs no rendering): convert the
@@ -722,6 +736,7 @@ def run_pso(
     progress=None,
     preview=None,
     preview_interval: float = 0.35,
+    early_stop_reduced: float = 0.0,
 ) -> FitResult:
     """Run a PSO fit with lenstronomy's own FittingSequence.
 
@@ -730,14 +745,11 @@ def run_pso(
     (Nelder-Mead) when ``polish`` is set, and the lowest-chi-squared solution is
     kept.
 
-    ``preview`` (if given) is called as ``preview(iteration, total, chi2, image)``
-    while the swarm runs, so the caller can show the fit converging. It is
-    throttled to at most one call per ``preview_interval`` seconds so the extra
-    rendering cannot dominate the fit's runtime.
-
-    Returns a :class:`FitResult` carrying the best-fit
-    :class:`~app.lensing_calc.Config`, the model image, the residual and the
-    chi-squared before/after.
+    ``early_stop_reduced > 0`` enables early stopping: once the global best of a
+    restart reaches the target reduced chi² (χ² ≤ early_stop_reduced · ndof),
+    lenstronomy's own ``early_stop_tolerance`` halts that swarm and the remaining
+    restarts are skipped — a converged fit does not burn the iterations it no
+    longer needs.  ``0`` (default) runs every iteration/restart as before.
     """
     log = []
 
@@ -765,6 +777,16 @@ def run_pso(
     chi2_before = fd.chi2(model_before, data)
     say(f"chi2 (initial) = {chi2_before:.4g}")
 
+    # Early stopping: stop when a restart reaches the target reduced chi².  The
+    # tolerance is expressed on lenstronomy's -2*logL scale inside the swarm;
+    # here we keep the target on the app's chi² scale (χ² ≤ target_chi2).
+    early_stop_chi2 = 0.0
+    if float(early_stop_reduced) > 0.0:
+        ndof_est = max(int(data.usable_pixels() - len(free_names)), 1)
+        early_stop_chi2 = float(early_stop_reduced) * ndof_est
+        say(f"early stop: target reduced \u03c7\u00b2 < {early_stop_reduced:.4g}"
+            f" (\u03c7\u00b2 \u2264 {early_stop_chi2:.4g})")
+
     from lenstronomy.Workflow.fitting_sequence import FittingSequence
 
     best = None          # (chi2, config, kwargs_result, samples)
@@ -784,6 +806,7 @@ def run_pso(
                 attempts=attempts, say=say,
                 preview=preview, preview_interval=preview_interval,
                 free_names=free_names,
+                early_stop_chi2=early_stop_chi2,
             )
             # Swarm-stage solution is always a candidate: with the ``init_pos``
             # particle seeded inside the loop it can never be worse than the
@@ -813,6 +836,10 @@ def run_pso(
             say(f"restart {attempt + 1}/{attempts}: chi2 = {chi2_i:.4g}")
             if best is None or chi2_i < best[0]:
                 best = (chi2_i, cfg_i, kw_res, samples)
+            if early_stop_chi2 and best[0] <= early_stop_chi2:
+                say("reached target reduced \u03c7\u00b2 — skipping remaining"
+                    " restarts")
+                break
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             say(f"restart {attempt + 1}/{attempts} failed: {last_error}")
