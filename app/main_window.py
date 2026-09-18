@@ -674,6 +674,42 @@ class MainWindow(QMainWindow):
         # Fit succeeded -> the export buttons light up (report PNG + chain).
         self.fit_bar.set_has_result(result.ok)
 
+        # Auto-lock on a good fit: when the FitBar's "lock on good fit" is
+        # enabled and the finished fit meets its reduced-χ² target, pin the
+        # fitted model by locking every currently-unlocked parameter (🔓 -> 🔒).
+        threshold = self.fit_bar.auto_lock_reduced()
+        if result.ok and threshold and result.reduced_chi2 <= threshold:
+            locked = self._lock_all_unlocked()
+            extra = f"  \u2713 good fit (\u03c7\u00b2\u03bd {result.reduced_chi2:.4g}"
+            extra += f" \u2264 {threshold:.4g}) \u2014 locked {locked} parameter(s)"
+            self.fit_bar.set_status(
+                f"\u03c7\u00b2 {result.chi2_before:.4g}"
+                f" \u2192 {result.chi2_after:.4g}"
+                f"   ({result.n_free} free, ndof {result.ndof})" + extra
+            )
+            self.statusBar().showMessage(
+                f"fit good (\u03c7\u00b2\u03bd {result.reduced_chi2:.4g}"
+                f" \u2264 {threshold:.4g}): locked {locked} parameter(s)", 6000
+            )
+
+    def _lock_all_unlocked(self) -> int:
+        """Lock every currently-unlocked (🔓) parameter across all panels.
+
+        Already-locked parameters are left untouched (``set_fixed`` is a no-op
+        for them).  Returns the number of parameters newly locked so the caller
+        can report it.
+        """
+        count = 0
+        cards = (list(self.lenses_panel._cards)
+                 + list(self.sources_panel._cards)
+                 + list(self.point_sources_panel._cards))
+        for card in cards:
+            for row in card.sliders.values():
+                if not row.is_fixed():
+                    row.set_fixed(True)   # programmatic lock; user need not act
+                    count += 1
+        return count
+
     def _save_fit_report(self):
         """Save the fit's data | model | residual report image via a dialog."""
         result = self.controller.fit_result

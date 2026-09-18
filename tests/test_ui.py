@@ -617,6 +617,49 @@ def test_apply_fitted_config_writes_back_but_respects_locks(qapp):
     win.deleteLater()
 
 
+def test_lock_all_unlocked_locks_only_free(qapp):
+    """auto-lock pins every currently-free parameter and leaves fixed ones
+    untouched."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    lens_card = win.lenses_panel._cards[0]
+    src_card = win.sources_panel._cards[0]
+    lens_card.sliders["gamma1"].set_fixed(True)   # already locked -> stays
+
+    free_before = sum(1 for c in (lens_card, src_card)
+                      for r in c.sliders.values() if not r.is_fixed())
+    assert free_before > 0
+
+    locked = win._lock_all_unlocked()
+    assert locked == free_before                  # only the free ones were locked
+    for c in (lens_card, src_card):
+        for r in c.sliders.values():
+            assert r.is_fixed()                   # everything ends up locked
+    # a second pass locks nothing new
+    assert win._lock_all_unlocked() == 0
+    win.close()
+    win.deleteLater()
+
+
+def test_fit_bar_auto_lock_reduced(qapp):
+    """The "lock on good fit" target is off by default and reported only when
+    enabled, mirroring the early-stop box."""
+    from app.controls import FitBar
+
+    bar = FitBar()
+    assert bar.auto_lock_reduced() == 0.0            # disabled by default
+    assert bar._lock_val.isEnabled() is False
+    bar._lock_chk.setChecked(True)
+    assert bar._lock_val.isEnabled() is True
+    bar._lock_val.setValue(2.5)
+    assert abs(bar.auto_lock_reduced() - 2.5) < 1e-9
+    bar._lock_chk.setChecked(False)
+    assert bar.auto_lock_reduced() == 0.0            # back to disabled
+    assert bar._lock_val.isEnabled() is False
+    bar.deleteLater()
+
+
 @pytest.mark.slow
 def test_gui_fit_closed_loop(qapp):
     """Full loop: load data, lock all but one parameter, fit, write back."""
@@ -967,6 +1010,84 @@ def test_gui_shows_live_fit_previews(qapp):
         qapp.processEvents()
         _time.sleep(0.02)
     assert win.lenses_panel._cards[0].sliders["theta_E"].value() > 0.95
+    win.close()
+    win.deleteLater()
+
+
+def test_fit_auto_locks_on_good_chi2(qapp):
+    """With "🔒 lock on good fit" enabled, a fit that ends at a good reduced χ²
+    pins every previously-free parameter (🔓 -> 🔒)."""
+    from PyQt5.QtCore import QEventLoop, QTimer
+
+    from app import lensing_calc as lc
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    truth = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=1.10,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=[lc.SourceParams(amp=1.0, R_sersic=0.12, n_sersic=3.0,
+                                 e1=0.1, e2=-0.1, center_x=0.08, center_y=-0.06)],
+        num_pix=60, delta_pix=0.05,
+    )
+    mock = lc.compute(truth).image
+    sigma = 0.002
+    win._external_array = mock + np.random.RandomState(3).normal(0, sigma, mock.shape)
+    win._noise_array = np.full(mock.shape, sigma)
+    win.display_bar._numpix.setValue(60)
+    win.display_bar._delta_pix.setValue(0.05)
+    card = win.lenses_panel._cards[0]
+    card._light_combo.setCurrentText("SERSIC_ELLIPSE")
+    for name, val in (("light_amp", 0.6), ("light_R_sersic", 0.9),
+                      ("light_n_sersic", 4.0), ("light_e1", 0.15), ("light_e2", 0.05)):
+        card.sliders[name].set_value(val)
+    card.sliders["theta_E"].set_value(0.98)
+    # single free parameter (theta_E) so the fit converges to a good χ²ν; the
+    # worker thread draws its own RNG so we start close to the truth (0.98, vs
+    # 1.10) to keep the 1-D fit robustly above the "good" bar.
+    for name, row in card.sliders.items():
+        if name != "theta_E":
+            row.set_fixed(True)
+    # the mock was synthesised with the truth source values, so the locked
+    # source sliders must match them (defaults would put a systematic floor on χ²)
+    for src_card in win.sources_panel._cards:
+        for name, val in (("amp", 1.0), ("R_sersic", 0.12), ("n_sersic", 3.0),
+                          ("e1", 0.1), ("e2", -0.1), ("center_x", 0.08),
+                          ("center_y", -0.06)):
+            src_card.sliders[name].set_value(val)
+            src_card.sliders[name].set_fixed(True)
+
+    # enable the feature with a comfortable "good" threshold
+    win.fit_bar._lock_chk.setChecked(True)
+    win.fit_bar._lock_val.setValue(2.0)
+
+    win.fit_bar._particles.setValue(30)
+    win.fit_bar._iterations.setValue(100)
+    win.fit_bar._restarts.setValue(1)
+
+    win._start_fit()
+    loop = QEventLoop()
+    win._fit_worker.finished_ok.connect(lambda *a: QTimer.singleShot(20, loop.quit))
+    win._fit_worker.failed.connect(lambda *a: QTimer.singleShot(20, loop.quit))
+    QTimer.singleShot(120000, loop.quit)
+    loop.exec_()
+    qapp.processEvents()
+
+    assert win._fit_result is not None and win._fit_result.ok
+    assert win._fit_result.reduced_chi2 <= 2.0, win._fit_result.reduced_chi2
+    # the previously-free theta_E (and everything else) is now locked
+    import time as _time
+    deadline = _time.time() + 15.0
+    while (_time.time() < deadline
+           and not win.lenses_panel._cards[0].sliders["theta_E"].is_fixed()):
+        qapp.processEvents()
+        _time.sleep(0.02)
+    for c in win.lenses_panel._cards + win.sources_panel._cards:
+        for r in c.sliders.values():
+            assert r.is_fixed(), f"parameter unexpectedly still free"
+    assert "locked" in win.fit_bar._status.text()
     win.close()
     win.deleteLater()
 

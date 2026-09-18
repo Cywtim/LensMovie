@@ -840,6 +840,31 @@ class FitBar(QWidget):
         self._early_val.setEnabled(False)
         self._early_chk.toggled.connect(self._early_val.setEnabled)
 
+        # Auto-lock on a good fit: when enabled, a finished fit whose reduced
+        # chi² (χ²/DoF) meets the target locks every currently-unlocked (🔓)
+        # parameter, pinning the fitted model while the fit is still in the
+        # "good" regime.  Independent target box so early stopping and
+        # auto-locking can use different thresholds.
+        self._lock_chk = QCheckBox("🔒 lock on good fit")
+        self._lock_chk.setToolTip(
+            "After a fit ends with reduced chi\u00b2 \u2264 the target, lock every "
+            "parameter that is currently unlocked (\U0001f513 becomes \U0001f512) "
+            "so the fitted model is pinned.  Already-locked parameters stay "
+            "locked.\nUnchecked = never auto-lock (default)."
+        )
+        self._lock_val = QDoubleSpinBox()
+        self._lock_val.setRange(0.1, 10.0)
+        self._lock_val.setDecimals(2)
+        self._lock_val.setSingleStep(0.1)
+        self._lock_val.setValue(1.0)
+        self._lock_val.setToolTip(
+            "target reduced chi\u00b2 (\u03c7\u00b2/DoF): lock the parameters "
+            "only if the fit is at least this good (\u22481.0 is a good fit to "
+            "known noise)"
+        )
+        self._lock_val.setEnabled(False)
+        self._lock_chk.toggled.connect(self._lock_val.setEnabled)
+
 
         # Export after a finished fit.  "Save fit" writes the data|model|residual
         # report PNG; "Save chain" writes the fitted parameter chain (CSV + a
@@ -874,6 +899,9 @@ class FitBar(QWidget):
         lay.addWidget(self._early_chk)
         lay.addWidget(self._early_val)
         lay.addSpacing(8)
+        lay.addWidget(self._lock_chk)
+        lay.addWidget(self._lock_val)
+        lay.addSpacing(8)
         lay.addWidget(self._save_result_btn)
         lay.addWidget(self._save_chain_btn)
         lay.addSpacing(12)
@@ -898,6 +926,11 @@ class FitBar(QWidget):
 
     def preview_enabled(self) -> bool:
         return self._preview_chk.isChecked()
+
+    def auto_lock_reduced(self) -> float:
+        """The reduced-χ² threshold for the "lock on good fit" feature, or 0.0
+        when it is disabled.  Only read by the presenter after a fit finishes."""
+        return self._lock_val.value() if self._lock_chk.isChecked() else 0.0
 
     def settings(self) -> dict:
         return {

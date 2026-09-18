@@ -43,6 +43,11 @@ Single-window layout:
   The strip also has an optional **stop χ²ν** control (default off): when enabled,
   a restart that reaches the target reduced chi² halts the swarm and skips the
   remaining restarts instead of burning iterations on an already-converged fit.
+  A second optional **🔒 lock on good fit** control (default off, independent
+  threshold, default `1.0`) goes one step further: once a finished fit meets its
+  reduced-χ²ν target, **every currently-unlocked 🔓 parameter is automatically
+  locked**, pinning the fitted model as the new working point (handy after a fit
+  converges — no manual tap-through of every lock button).
   **You can watch it converge**: while the swarm runs, the *lower model panels*
   (Fermat potential, Lens image, time delay, critical curve) live-update with
   the swarm's current best model, and the unlocked sliders track the running
