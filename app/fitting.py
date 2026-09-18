@@ -53,6 +53,9 @@ class FitResult:
     fixed_names: list = field(default_factory=list)
     error: str = ""
     log: list = field(default_factory=list)
+    # Reduced chi² (chi2_after / ndof): the per-degree-of-freedom goodness of
+    # fit, comparable across cases (≈1.0 for a good fit to known noise).
+    reduced_chi2: float = float("nan")
     # Parameter chain of the best restart: one entry per swarm iteration giving
     # the global-best value of every free parameter (name -> values, aligned
     # with chain_iter) plus the estimated chi2 at that iteration.  Recorded by
@@ -649,8 +652,16 @@ def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
     # lenstronomy's initial swarm is purely uniform in the box — the starting
     # position is NOT a candidate, so in many dimensions the random particles can
     # all be worse than a sharp, near-optimal start and the "best" would regress.
-    # Seed one particle exactly at ``init_pos`` so a fit can never end up worse
-    # than where it started (the rest of the swarm still explores around it).
+    # Canonically ``Sampler.pso`` injects the start as the swarm's *global best*
+    # (``set_global_best(init_pos, ...)``), which guarantees the reported result
+    # is never worse than the current slider values.  LensMovie drives the raw
+    # ``ParticleSwarmOptimizer`` directly, so replicate that seeding, AND pin one
+    # real particle at ``init_pos`` so the swarm also explores outward from it.
+    try:
+        logl0 = float(fs.likelihoodModule.logL(list(init_pos)))
+        swarm.set_global_best([float(v) for v in init_pos], [0.0] * len(init_pos), logl0)
+    except Exception:
+        pass
     try:
         swarm.swarm[0].position = [float(v) for v in init_pos]
         swarm.swarm[0].velocity = [0.0] * len(init_pos)
@@ -838,6 +849,7 @@ def run_pso(
         chi2_after=chi2_after,
         n_free=len(free_names),
         ndof=max(ndof, 0),
+        reduced_chi2=chi2_after / max(ndof, 1),
         free_names=free_names,
         fixed_names=fixed_names,
         log=log,

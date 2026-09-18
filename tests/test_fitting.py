@@ -272,6 +272,9 @@ def test_run_pso_emits_converging_previews():
     assert all(np.isfinite(c) for c in res.chain_chi2)
     assert all(b <= a + 1e-6 for a, b in
                zip(res.chain_chi2, res.chain_chi2[1:]))
+    # reduced chi² is the per-DoF goodness of fit (uses the app's ndof scale)
+    assert np.isfinite(res.reduced_chi2)
+    assert res.reduced_chi2 == pytest.approx(res.chi2_after / res.ndof)
 
 
 @pytest.mark.slow

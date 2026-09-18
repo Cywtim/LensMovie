@@ -82,6 +82,7 @@ def _result_with_chain():
         ok=True,
         model=np.ones((4, 4)), residual=np.zeros((4, 4)),
         chi2_before=90.0, chi2_after=2.5, n_free=2, ndof=10,
+        reduced_chi2=2.5 / 10,
         chain_iter=[1, 2, 3], chain_chi2=[9.0, 4.5, 2.5],
         chain={"lens0.theta_E": [0.6, 0.63, 0.64],
                "lens_light0.amp": [0.50, 0.51, 0.52]},

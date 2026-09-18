@@ -533,6 +533,7 @@ class MainWindow(QMainWindow):
             r = self._fit_result
             self._ext_label.setText(
                 f"best fit: \u03c7\u00b2 {r.chi2_before:.4g} \u2192 {r.chi2_after:.4g}"
+                f"  reduced \u03c7\u00b2_\u03bd {r.reduced_chi2:.4g}"
                 f"  ({r.n_free} free, ndof {r.ndof})")
             return
 

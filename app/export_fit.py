@@ -73,6 +73,7 @@ def save_fit_report_png(path: str, data, result) -> str:
                 .ax.tick_params(labelsize=7)
         fig.suptitle(
             f"LensMovie fit — χ²: {result.chi2_before:.4g} → {result.chi2_after:.4g}"
+            f"    reduced χ²ν {result.reduced_chi2:.4g}"
             f"    free: {result.n_free}    ndof: {result.ndof}",
             fontsize=10,
         )
