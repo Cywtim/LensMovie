@@ -98,9 +98,10 @@ class MainWindow(QMainWindow):
 
         # External-image panel: taller than the 3D bar (spans the 3D + display
         # rows) and a bit wider than before.  It is no longer a fixed square.
+        # It sits in a horizontal splitter with the 3D/left column, so the user
+        # can drag the divider; a floor keeps it usable, no ceiling caps it.
         self.ext_panel = QGroupBox("External image / fit data")
-        self.ext_panel.setMinimumWidth(300)
-        self.ext_panel.setMaximumWidth(400)
+        self.ext_panel.setMinimumWidth(280)
         # Vertical size hint ignored: the matplotlib canvas inside would push the
         # whole top block to ~390 px tall, shrinking the 2D grid.  The cap keeps
         # the top block's minimum modest, and the panel is still stretched to
@@ -192,12 +193,24 @@ class MainWindow(QMainWindow):
         # gaps between the 3D bar / display row / fit strip.
         lc.addStretch(1)
 
+        # A horizontal splitter between the 3D/left column and the external
+        # panel: drag the divider to trade width between the 3D bar and the
+        # "External image / fit data" panel.  The 3D bar keeps its fixed height
+        # (it is grid rows, not width, that a 3D scene depends on).
+        self.top_split = QSplitter(Qt.Horizontal)
+        self.top_split.setChildrenCollapsible(False)
+        self.top_split.addWidget(left_col)
+        self.top_split.addWidget(self.ext_panel)
+        self.top_split.setStretchFactor(0, 3)
+        self.top_split.setStretchFactor(1, 1)
+        # Seed widths: favour the 3D/left column; the user can then drag.
+        self.top_split.setSizes([850, 400])
+
         top_block = QWidget()
         tb = QHBoxLayout(top_block)
         tb.setContentsMargins(0, 0, 0, 0)
-        tb.setSpacing(4)
-        tb.addWidget(left_col, 1)
-        tb.addWidget(self.ext_panel, 0)
+        tb.setSpacing(0)
+        tb.addWidget(self.top_split, 1)
 
         # ------------------------------------------------------------ 2D grid (resizable)
         # The three columns live in a horizontal QSplitter (drag to resize), and
