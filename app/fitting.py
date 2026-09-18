@@ -713,8 +713,11 @@ def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
         if preview is not None and (now - last_preview) >= float(preview_interval):
             last_preview = now
             try:
-                image_i = lc.render_image(cfg_i)
-                preview(it + 1, int(n_iterations), chi2_i, image_i)
+                # Full SimResult (image + fermat + delay + critical/caustic
+                # curves) so the GUI can drive all its lower model panels with
+                # the evolving best model, plus the Config for live sliders.
+                sim_i = lc.compute(cfg_i)
+                preview(it + 1, int(n_iterations), chi2_i, sim_i, cfg_i)
             except Exception:
                 pass      # a preview must never break the fit
 

@@ -45,7 +45,7 @@ class LensMovieController(QObject):
     # -- fit lifecycle ---------------------------------------------------------
     fitRunningChanged = pyqtSignal(bool)
     fitStatus = pyqtSignal(str)                            # progress line
-    fitPreview = pyqtSignal(int, int, float, object)       # iter, total, chi2, image
+    fitPreview = pyqtSignal(int, int, float, object, object)  # iter, total, chi2, sim, config
     fitFinished = pyqtSignal(object)                       # FitResult
     fitFailed = pyqtSignal(str)
 

@@ -38,15 +38,19 @@ Single-window layout:
   on a **background thread** (the GUI stays responsive) and only the **unlocked 🔓**
   parameters are varied — locked ones are held exactly. On completion the
   best-fit values are written back into the sliders, the strip reports
-  `χ² initial → best (free, ndof) + reduced χ²ν`, and the data panel can show
-  **best-fit model** or **residual**.
+  `χ² initial → best (free, ndof) + reduced χ²ν`, and the external data panel
+  can show **best-fit model** or **residual** through its mode selector.
   The strip also has an optional **stop χ²ν** control (default off): when enabled,
   a restart that reaches the target reduced chi² halts the swarm and skips the
   remaining restarts instead of burning iterations on an already-converged fit.
-  **You can watch it converge**: while the swarm runs, the data panel draws the
-  current best model live (`fitting… iter i/N`, with the running χ² in the fit
-  strip), so a long fit is not a black box. Preview rendering is optional and
-  rate-limited — a **preview** checkbox plus an interval (default `0.5 s`).
+  **You can watch it converge**: while the swarm runs, the *lower model panels*
+  (Fermat potential, Lens image, time delay, critical curve) live-update with
+  the swarm's current best model, and the unlocked sliders track the running
+  values (`fitting… iter i/N`, with the running χ² in the fit strip), so a long
+  fit is not a black box. The external data panel is left on the user's selected
+  mode — previews no longer overwrite it with “fitting…” frames. Preview
+  rendering is optional and rate-limited — a **preview** checkbox plus an
+  interval (default `0.5 s`).
   Measured cost is negligible either way (a 200-iteration fit took 10.7 s with
   previews off vs 10.0–10.3 s at every 0.1–2 s, i.e. within run-to-run noise), so
   it can normally be left on; uncheck it on a slow machine for the guaranteed

@@ -892,7 +892,9 @@ def test_axes_fill_the_widget_binding_dimension(qapp):
 
 @pytest.mark.slow
 def test_gui_shows_live_fit_previews(qapp):
-    """During a fit the data panel must show the swarm's current model."""
+    """During a fit the lower model panels must show the swarm's current model
+    and the sliders must track the live parameter values; the external data
+    panel is left on the user's mode (no auto-switch to best-fit)."""
     from PyQt5.QtCore import QEventLoop, QTimer
 
     from app import lensing_calc as lc
@@ -923,6 +925,12 @@ def test_gui_shows_live_fit_previews(qapp):
     for name, row in card.sliders.items():
         if name != "theta_E":
             row.set_fixed(True)
+    # Isolate the single free parameter (theta_E): leave the source params
+    # unlocked too and the 9-parameter fit reliably falls into a degenerate
+    # local minimum with a 20x60 budget, making this preview test flaky.
+    for src_card in win.sources_panel._cards:
+        for row in src_card.sliders.values():
+            row.set_fixed(True)
 
     win.fit_bar._particles.setValue(20)
     win.fit_bar._iterations.setValue(60)
@@ -931,7 +939,7 @@ def test_gui_shows_live_fit_previews(qapp):
     seen = []
     win._start_fit()
     win._fit_worker.previewed.connect(
-        lambda it, total, chi2, img: seen.append((it, total, chi2)))
+        lambda it, total, chi2, sim, cfg: seen.append((it, total, chi2, sim, cfg)))
 
     loop = QEventLoop()
     win._fit_worker.finished_ok.connect(lambda *a: QTimer.singleShot(20, loop.quit))
@@ -941,9 +949,24 @@ def test_gui_shows_live_fit_previews(qapp):
     qapp.processEvents()
 
     assert len(seen) >= 2, f"expected live previews, got {len(seen)}"
-    # the panel ended up showing the finished best-fit model
-    assert "Best-fit model" in win.external_canvas._ax.get_title()
-    assert win._fit_result is not None
+    for it, total, chi2, sim, cfg in seen:
+        assert sim is not None and sim.ok is True
+        assert np.isfinite(sim.image).all()
+        assert cfg is not None
+    # Previews went to the lower model panels, not the data panel: the external
+    # mode is left untouched ('data') and the fit result lives in the sliders.
+    assert win._ext_mode.currentText() == "data"
+    assert win._fit_result is not None and win._fit_result.ok
+    # live/final slider write-back happens through queued signals, so wait (with
+    # an event pump) for the unlocked theta_E row to move toward the truth rather
+    # than asserting at a racy instant.
+    import time as _time
+    deadline = _time.time() + 15.0
+    while (_time.time() < deadline
+           and win.lenses_panel._cards[0].sliders["theta_E"].value() < 0.95):
+        qapp.processEvents()
+        _time.sleep(0.02)
+    assert win.lenses_panel._cards[0].sliders["theta_E"].value() > 0.95
     win.close()
     win.deleteLater()
 

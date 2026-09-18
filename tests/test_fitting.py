@@ -240,21 +240,24 @@ def test_run_pso_emits_converging_previews():
         start, data, lens_s, ll_s, src_s,
         n_particles=25, n_iterations=80, n_restarts=1, polish=True,
         # a tiny interval so the test sees plenty of previews
-        preview=lambda it, total, chi2, img: seen.append((it, total, chi2, img)),
+        preview=lambda it, total, chi2, sim, cfg: seen.append((it, total, chi2, sim, cfg)),
         preview_interval=0.0,
     )
 
     assert res.ok, res.error
     assert len(seen) >= 5, f"expected several previews, got {len(seen)}"
-    for it, total, chi2, img in seen:
+    for it, total, chi2, sim, cfg in seen:
         assert 1 <= it <= total
         assert np.isfinite(chi2) and chi2 > 0
-        assert img.shape == data.image.shape     # a renderable model each time
-        assert np.isfinite(img).all()
+        assert sim is not None and sim.ok is True
+        assert sim.image.shape == data.image.shape   # a renderable model each time
+        assert np.isfinite(sim.image).all()
+        # the preview must carry the evolving best config for live sliders
+        assert cfg is not None and len(cfg.lenses) == len(start.lenses)
     # The swarm's global best can only improve, so the previewed chi2 must be
     # monotonically non-increasing. (Strict decrease is not guaranteed: the
     # initial random swarm may already contain a near-perfect particle.)
-    chi2s = [c for _, _, c, _ in seen]
+    chi2s = [c for _, _, c, _, _ in seen]
     assert all(b <= a + 1e-6 for a, b in zip(chi2s, chi2s[1:])), chi2s
     # The fit itself must be an improvement on the starting model, and the final
     # answer must be at least as good as anything previewed.

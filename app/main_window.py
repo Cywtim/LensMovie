@@ -597,24 +597,49 @@ class MainWindow(QMainWindow):
             self.sources_panel.param_specs(),
             self.point_sources_panel.param_specs(), settings,
         )
-        # Show the live model in the data panel while the fit runs (only when
-        # previews are enabled).
-        if self.fit_bar.preview_enabled():
-            self._ext_mode.setCurrentText("best-fit model")
+        # Previews (when enabled) drive the *lower model panels*, not the
+        # external data panel, so the data view stays on whatever the user
+        # selected.  The external 'best-fit model' / 'residual' views remain
+        # available through the mode selector after the fit.
         self._fit_preview_count = 0
 
-    def _fit_preview(self, iteration, total, chi2, image):
-        """Draw the swarm's current best model so the fit is visible as it runs."""
+    def _fit_preview(self, iteration, total, chi2, sim, config):
+        """Show the swarm's current best model in the lower model panels and
+        nudge the sliders to the live parameter values (locks respected).
+        """
         self._fit_preview_count = getattr(self, "_fit_preview_count", 0) + 1
-        display = self.display_bar.display()
+        if sim is None or sim.ok is False:
+            return
         try:
-            self.external_canvas.update_external(
-                image,
-                title=f"fitting\u2026 iter {iteration}/{total}",
+            display = self.display_bar.display()
+            num_pix, delta = sim.num_pix, sim.delta_pix
+            self.fermat_canvas.update_field(
+                sim.fermat, num_pix, delta, colormap=display["colormap"],
+                stretch="linear", sym=True, image_positions=sim.image_positions,
+            )
+            self.image_canvas.update_image(
+                self._lens_image_with_noise(sim.image, num_pix, delta),
+                num_pix, delta, sim.image_positions,
                 colormap=display["colormap"], stretch=display["stretch"],
             )
+            self.delay_canvas.update_field(
+                sim.time_delay, num_pix, delta, colormap=display["colormap"],
+                stretch=display["stretch"], image_positions=sim.image_positions,
+            )
+            source_positions = [
+                (np.array([s.center_x]), np.array([s.center_y]), i)
+                for i, s in enumerate(config.sources)
+            ]
+            self.curves_canvas.update_curves(
+                sim.cc_ra, sim.cc_dec, sim.caustic_ra, sim.caustic_dec,
+                num_pix, delta, image_positions=sim.image_positions,
+                source_positions=source_positions,
+            )
+            # Live sliders while the fit runs (no point-source card rebuild:
+            # the count cannot change mid-fit).
+            self._apply_fitted_config(config)
         except Exception:
-            pass
+            pass      # a preview must never break the fit
         self.fit_bar.set_status(
             f"fitting\u2026 iter {iteration}/{total}   \u03c7\u00b2 {chi2:.4g}"
             f"   (preview {self._fit_preview_count})"
@@ -641,9 +666,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"fit done: chi2 {result.chi2_before:.4g} -> {result.chi2_after:.4g}", 6000
         )
-        # Show the finished model in the data panel and switch it to the fit
-        # view (the panel currently shows "fitting…" previews).
-        self._ext_mode.setCurrentText("best-fit model")
+        # Rerender the model side: all four lower panels now show the fitted
+        # model/potential/curves.  The external panel keeps the user's chosen
+        # mode ('data' by default); 'best-fit model' / 'residual' stay one
+        # selector click away.
         self._rerender()
         # Fit succeeded -> the export buttons light up (report PNG + chain).
         self.fit_bar.set_has_result(result.ok)
