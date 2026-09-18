@@ -48,8 +48,8 @@ from PyQt5.QtWidgets import (
 
 from . import lensing_calc as lc
 from .controller import LensMovieController
-from .controls import (DataBar, DisplayBar, FitBar, LensesPanel, PointSourcesPanel,
-                       SourcesPanel)
+from .controls import (CosmologyPanel, DataBar, DisplayBar, FitBar, LensesPanel,
+                       PointSourcesPanel, SourcesPanel)
 from .plotting import CurvesCanvas, ExternalCanvas, FieldCanvas, ImageCanvas
 
 
@@ -231,6 +231,7 @@ class MainWindow(QMainWindow):
         self.curves_canvas = CurvesCanvas()
 
         # Config columns
+        self.cosmology_panel = CosmologyPanel()
         self.lenses_panel = LensesPanel()
         self.sources_panel = SourcesPanel()
         self.point_sources_panel = PointSourcesPanel()
@@ -256,16 +257,18 @@ class MainWindow(QMainWindow):
         vc = QVBoxLayout(pane_config)
         vc.setContentsMargins(4, 2, 4, 4)
         vc.setSpacing(4)
-        # The three config panels share the column; a vertical splitter lets the
-        # user resize lenses / sources / point sources independently.
+        # Cosmology sits on top of the lens/source list; the rest share the
+        # column, and a vertical splitter lets the user resize the groups.
         self.cfg_split = QSplitter(Qt.Vertical)
         self.cfg_split.setChildrenCollapsible(False)
+        self.cfg_split.addWidget(self.cosmology_panel)
         self.cfg_split.addWidget(self.lenses_panel)
         self.cfg_split.addWidget(self.sources_panel)
         self.cfg_split.addWidget(self.point_sources_panel)
-        self.cfg_split.setStretchFactor(0, 1)
+        self.cfg_split.setStretchFactor(0, 0)
         self.cfg_split.setStretchFactor(1, 1)
         self.cfg_split.setStretchFactor(2, 1)
+        self.cfg_split.setStretchFactor(3, 1)
         vc.addWidget(self.cfg_split, 1)
 
         self.col_split = QSplitter(Qt.Horizontal)
@@ -325,6 +328,7 @@ class MainWindow(QMainWindow):
         self._timer.setInterval(50)
         self._timer.timeout.connect(self._rerender)
 
+        self.cosmology_panel.changed.connect(self._schedule)
         self.lenses_panel.changed.connect(self._schedule)
         self.sources_panel.changed.connect(self._schedule)
         self.point_sources_panel.changed.connect(self._schedule)
@@ -597,6 +601,7 @@ class MainWindow(QMainWindow):
             config, data, self.lenses_panel.param_specs(),
             self.sources_panel.param_specs(),
             self.point_sources_panel.param_specs(), settings,
+            cosmology_spec=self.cosmology_panel.param_spec(),
         )
         # Previews (when enabled) drive the *lower model panels*, not the
         # external data panel, so the data view stays on whatever the user
@@ -713,6 +718,7 @@ class MainWindow(QMainWindow):
                 if not row.is_fixed():
                     row.set_fixed(True)   # programmatic lock; user need not act
                     count += 1
+        count += self.cosmology_panel.lock_all()
         return count
 
     def _save_fit_report(self):
@@ -769,6 +775,7 @@ class MainWindow(QMainWindow):
 
     def _apply_fitted_config(self, config: lc.Config):
         """Push fitted lens/source values back into the panel sliders."""
+        self.cosmology_panel.set_values(config.cosmology)
         fields = ("theta_E", "gamma1", "gamma2", "e1", "e2", "gamma",
                   "center_x", "center_y", "light_amp", "light_R_sersic",
                   "light_n_sersic", "light_sigma", "light_e1", "light_e2")
@@ -818,6 +825,7 @@ class MainWindow(QMainWindow):
             delta_pix=d["delta_pix"],
             psf_kernel=self.controller.current_psf_kernel(d),
             sky_amp=d["sky_amp"],
+            cosmology=self.cosmology_panel.cosmology(),
         )
 
     def current_psf_kernel(self):

@@ -288,9 +288,19 @@ def build_setup(
     lens_light_specs: list,
     source_specs: list,
     point_source_specs: list = None,
+    cosmology_spec: dict = None,
     ref_source_index: int = -1,
 ):
-    """Build ``(kwargs_data_joint, kwargs_model, kwargs_params, free, fixed)``."""
+    """Build ``(kwargs_data_joint, kwargs_model, kwargs_params, free, fixed)``.
+
+    ``cosmology_spec`` (optional) is the ``{name: (value, lower, upper, fixed)}``
+    dict from the Cosmology panel.  When at least one of its five parameters is
+    unlocked, ``cosmology_sampling`` is turned on in lenstronomy and the sampled
+    cosmology flows through ``kwargs_special``; otherwise the (possibly edited)
+    cosmology is handed to the fit engine verbatim via ``kwargs_model["cosmo"]``.
+    Either way the fit engine and the app's own renderer build the *same*
+    astropy ``w0waCDM``, so the two can never disagree about distances.
+    """
     if data is None:
         raise FitError("no data prepared: load an image and enable the model grid")
     if data.noise is None:
@@ -329,6 +339,10 @@ def build_setup(
         "lens_redshift_list": lens_zs,
         "z_source": z_source,
         "multi_plane": True,
+        # The app owns the cosmology: the same astropy ``w0waCDM`` instance is
+        # handed to the fit engine that ``lc.compute`` uses to render, so a fixed
+        # (locked) cosmology is honoured by both without any drift.
+        "cosmo": config.cosmology.astropy_cosmo(),
     }
     if ll_models:
         kwargs_model["lens_light_model_list"] = ll_models
@@ -346,14 +360,70 @@ def build_setup(
     if ps_models:
         kwargs_params["point_source_model"] = [pa, pb, pc, pd, pe]
 
+    # Cosmology fitting: lenstronomy samples H0/Ωm/... through kwargs_special
+    # when any of them is unlocked; locked ones are handed over as fixed values
+    # so ``get_astropy_cosmology`` still sees every knob of the w0waCDM model.
+    cosmo_free, cosmo_fixed = _cosmology_entries(cosmology_spec, kwargs_model,
+                                                 kwargs_params)
+
     kwargs_data_joint = _build_data_joint(config, data)
 
-    if not free_names:
+    if not (free_names or cosmo_free):
         raise FitError(
             "every parameter is fixed — unlock at least one parameter (🔓) to fit"
         )
+    free_names = free_names + cosmo_free
+    fixed_names = fixed_names + cosmo_fixed
 
     return kwargs_data_joint, kwargs_model, kwargs_params, free_names, fixed_names
+
+
+def _cosmology_entries(cosmology_spec, kwargs_model, kwargs_params,
+                       ) -> tuple:
+    """Wire the Cosmology panel into the fit setup.
+
+    Returns the extra ``(free, fixed)`` parameter names (``cosmo.H0``, …).
+    Decides between two modes:
+
+    * **all locked** — the cosmo in ``kwargs_model["cosmo"]`` already carries the
+      user's values; nothing more to do (cheap, and distances are exact).
+    * **≥1 unlocked** — enable lenstronomy ``cosmology_sampling`` and feed a
+      ``kwargs_params["special"]`` block; each iteration the sampled values are
+      pushed into ``kwargs_special`` and re-built into the background cosmo that
+      lenslight/multi-plane use, which is exactly what the app's renderer does.
+    """
+    if not cosmology_spec:
+        return [], []
+    spec = {}
+    for name in ("H0", "Om0", "Ode0", "w0", "wa"):
+        if name in cosmology_spec:
+            spec[name] = cosmology_spec[name]
+
+    spec_init, spec_sigma, spec_fixed = {}, {}, {}
+    spec_lower, spec_upper = {}, {}
+    free, fixed = [], []
+    for name, (value, lower, upper, is_fixed) in spec.items():
+        spec_init[name] = float(value)
+        if is_fixed:
+            spec_fixed[name] = float(value)
+            fixed.append(f"cosmo.{name}")
+        else:
+            spec_sigma[name] = abs(float(upper) - float(lower)) / 3.0
+            spec_lower[name] = float(lower)
+            spec_upper[name] = float(upper)
+            free.append(f"cosmo.{name}")
+
+    if not free:
+        # Nothing is sampled: the fixed cosmo in kwargs_model["cosmo"] already
+        # carries the user's (locked) values verbatim, and no per-knob name
+        # bookkeeping is needed.  Return nothing.
+        return [], []
+    kwargs_model["cosmology_sampling"] = True
+    kwargs_model["cosmology_model"] = lc.COSMOLOGY_MODEL
+    kwargs_params["special"] = [
+        spec_init, spec_sigma, spec_fixed, spec_lower, spec_upper,
+    ]
+    return free, fixed
 
 
 def _build_data_joint(config: lc.Config, data: fd.FitData):
@@ -543,10 +613,23 @@ def model_config_from_result(config: lc.Config, kwargs_result: dict,
     point_sources = _ps_roundtrip(
         config, kw_lens, kwargs_result.get("kwargs_ps") or [])
 
+    # Sampled cosmology comes back through kwargs_special (sampled+fixed values);
+    # when the cosmology was never sampled the block is empty and the panel's
+    # current values are kept.
+    kw_special = kwargs_result.get("kwargs_special") or {}
+    cosmology = lc.CosmologyParams(
+        H0=float(kw_special.get("H0", config.cosmology.H0)),
+        Om0=float(kw_special.get("Om0", config.cosmology.Om0)),
+        Ode0=float(kw_special.get("Ode0", config.cosmology.Ode0)),
+        w0=float(kw_special.get("w0", config.cosmology.w0)),
+        wa=float(kw_special.get("wa", config.cosmology.wa)),
+    )
+
     return lc.Config(
         lenses=lenses, sources=sources, point_sources=point_sources,
         num_pix=num_pix, delta_pix=config.delta_pix,
         psf_kernel=config.psf_kernel, sky_amp=config.sky_amp,
+        cosmology=cosmology,
     )
 
 
@@ -580,11 +663,17 @@ def _chain_values(config: lc.Config, kw: dict, free_names: list) -> dict:
                     "n_sersic": "light_n_sersic", "sigma": "light_sigma",
                     "e1": "light_e1", "e2": "light_e2"}
 
+    kw_special = kw.get("kwargs_special") or {}
+
     values = {}
     for name in free_names:
         values[name] = float("nan")
         try:
-            if name.startswith("lens_light"):
+            if name.startswith("cosmo."):
+                key = name[len("cosmo."):]
+                if key in kw_special:
+                    values[name] = float(kw_special[key])
+            elif name.startswith("lens_light"):
                 j = int(name[len("lens_light"):name.index(".")])
                 key = name[name.index(".") + 1:]
                 arr = kw_ll[j] if j < len(kw_ll) else None
@@ -737,6 +826,7 @@ def run_pso(
     lens_light_specs: list,
     source_specs: list,
     point_source_specs: list = None,
+    cosmology_spec: dict = None,
     n_particles: int = 30,
     n_iterations: int = 100,
     n_restarts: int = 2,
@@ -782,7 +872,8 @@ def run_pso(
     try:
         kwargs_data_joint, kwargs_model, kwargs_params, free_names, fixed_names = build_setup(
             config, data, lens_specs, lens_light_specs, source_specs,
-            point_source_specs, ref_source_index,
+            point_source_specs, cosmology_spec=cosmology_spec,
+            ref_source_index=ref_source_index,
         )
     except FitError as exc:
         return FitResult(ok=False, error=str(exc), log=log)

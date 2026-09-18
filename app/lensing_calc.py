@@ -222,6 +222,40 @@ def gaussian_psf_kernel(fwhm_arcsec: float, delta_pix: float, size: int = 0) -> 
     return kernel / total if total > 0 else np.array([[1.0]])
 
 
+# Note: the cosmology is always carried as an astropy ``w0waCDM`` instance (the
+# richest supported set: H0, Ωm, ΩΛ, w0, wa).  Locked (ΛCDM) values collapse to
+# the same distances as the library's FlatΛCDM default, so this is a superset,
+# not a behaviour change.
+COSMOLOGY_MODEL = "w0waCDM"
+
+
+@dataclass
+class CosmologyParams:
+    """Cosmological background used for the multi-plane distances.
+
+    Fields mirror astropy's ``w0waCDM``: ``H0`` [km/s/Mpc], matter density
+    ``Om0``, vacuum density ``Ode0``, and the dark-energy equation of state
+    ``w0`` (constant) plus ``wa`` (evolution).  ΛCDM is the special case
+    ``Ode0 = 1 - Om0, w0 = -1, wa = 0``.
+    """
+
+    H0: float = 70.0
+    Om0: float = 0.3
+    Ode0: float = 0.7
+    w0: float = -1.0
+    wa: float = 0.0
+
+    def to_kwargs(self) -> dict:
+        """The astropy cosmology keyword dict (lenstronomy's sampling keys)."""
+        return {"H0": float(self.H0), "Om0": float(self.Om0),
+                "Ode0": float(self.Ode0), "w0": float(self.w0), "wa": float(self.wa)}
+
+    def astropy_cosmo(self):
+        """The astropy.cosmology instance lenstronomy uses for distances."""
+        from lenstronomy.Util.cosmo_util import get_astropy_cosmology
+        return get_astropy_cosmology(COSMOLOGY_MODEL, self.to_kwargs())
+
+
 @dataclass
 class Config:
     """Full user configuration passed to :func:`compute`."""
@@ -236,6 +270,10 @@ class Config:
     psf_kernel: np.ndarray | None = None
     # Constant sky background added to the model image.
     sky_amp: float = 0.0
+    # Cosmological background for the multi-plane distances.  Keeping the field
+    # last preserves positional constructions.  The fit and the renderer build
+    # the same astropy cosmo from these values, so they can never diverge.
+    cosmology: CosmologyParams = field(default_factory=CosmologyParams)
 
 
 @dataclass
@@ -387,13 +425,19 @@ def expand_lenses(
 # ------------------------------------------------------------------ the engine
 
 
-def _get_lens_model(lenses: list[LensParams], z_source: float):
-    """Build (and cache) the multi-plane LensModel for a given z_source."""
+def _get_lens_model(lenses: list[LensParams], z_source: float, cosmo=None):
+    """Build (and cache) the multi-plane LensModel for a given z_source.
+
+    ``cosmo`` is an astropy cosmology instance (the model's background).  It is
+    part of the cache key so a changed cosmology re-renders instead of reusing a
+    stale lens model.
+    """
     key = (
         tuple((l.model, l.redshift, l.theta_E, l.gamma1, l.gamma2,
                l.center_x, l.center_y, l.e1, l.e2, l.gamma,
                l.Rs, l.alpha_Rs, l.r_trunc) for l in lenses),
         z_source,
+        tuple(_cosmo_tokens(cosmo)),
     )
     cache = _lens_model_cache
     if key in cache:
@@ -410,11 +454,27 @@ def _get_lens_model(lenses: list[LensParams], z_source: float):
         lens_model_list=model_list,
         lens_redshift_list=redshift_list,
         z_source=z_source,
-        cosmo=None,
+        cosmo=cosmo,
         multi_plane=True,
     )
     cache[key] = (lm, kwargs_list)
     return cache[key]
+
+
+def _cosmo_tokens(cosmo) -> tuple:
+    """Cache tokens for an astropy cosmology (None -> the library default).
+
+    Astropy returns unit-bearing ``Quantity`` objects (H0 in km/s/Mpc), so the
+    dimensionful ones read ``.value`` before ``float()``.
+    """
+    if cosmo is None:
+        return (None,)
+    h0 = getattr(cosmo, "H0", None)
+    return (float(h0.value) if h0 is not None else 0.0,
+            float(getattr(cosmo, "Om0", 0.0)),
+            float(getattr(cosmo, "Ode0", 0.0)),
+            float(getattr(cosmo, "w0", 0.0)),
+            float(getattr(cosmo, "wa", 0.0)))
 
 
 _lens_model_cache: dict[tuple, tuple] = {}
@@ -445,9 +505,11 @@ def render_image(config: Config) -> np.ndarray:
     """
     num_pix = int(config.num_pix)
     delta_pix = float(config.delta_pix)
+    cosmo = config.cosmology.astropy_cosmo()
     image = np.zeros((num_pix, num_pix))
     for source in config.sources:
-        lens_model, kwargs_lens = _get_lens_model(config.lenses, source.redshift)
+        lens_model, kwargs_lens = _get_lens_model(config.lenses, source.redshift,
+                                                  cosmo)
         image += _render_source_image(
             lens_model, kwargs_lens, source, num_pix, delta_pix,
             psf_kernel=config.psf_kernel,
@@ -490,9 +552,11 @@ def compute(config: Config, ref_source_index: int = -1) -> SimResult:
     try:
         # Lensed image: sum each source's image at its own z_source.
         image = render_image(config)
+        cosmo = config.cosmology.astropy_cosmo()
         image_positions = []
         for si, source in enumerate(config.sources):
-            lens_model, kwargs_lens = _get_lens_model(config.lenses, source.redshift)
+            lens_model, kwargs_lens = _get_lens_model(config.lenses, source.redshift,
+                                                      cosmo)
             try:
                 pos = _solve_images(lens_model, kwargs_lens, source, color_idx=si)
                 image_positions.append(pos)
@@ -500,7 +564,7 @@ def compute(config: Config, ref_source_index: int = -1) -> SimResult:
                 image_positions.append((np.array([]), np.array([]), si))
 
         # 2D fields at the reference source redshift.
-        lens_model, kwargs_lens = _get_lens_model(config.lenses, ref_z)
+        lens_model, kwargs_lens = _get_lens_model(config.lenses, ref_z, cosmo)
         if len(config.sources) > 0:
             ref_src = config.sources[idx]
             ref_x, ref_y = ref_src.center_x, ref_src.center_y
@@ -683,11 +747,12 @@ def _render_point_sources(config, num_pix, delta_pix, psf_kernel=None):
     from lenstronomy.PointSource.point_source import PointSource
 
     pkernel = _point_source_kernel(psf_kernel)
+    cosmo = config.cosmology.astropy_cosmo()
     total = np.zeros((num_pix, num_pix))
     for point in config.point_sources:
         ptype, kw_ps, fixed_mag = point.lens_source_kwargs(config)
         z = point.position_and_redshift(config)[2]
-        lens_model, kwargs_lens = _get_lens_model(config.lenses, z)
+        lens_model, kwargs_lens = _get_lens_model(config.lenses, z, cosmo)
         point_source = PointSource(
             point_source_type_list=[ptype],
             lens_model=lens_model,

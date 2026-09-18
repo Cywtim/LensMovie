@@ -108,6 +108,16 @@ Single-window layout:
     plane, next to the caustic.  The curve panel auto-scales to include the
     markers, so nothing is clipped.
 - **Config panels**:
+  - **Cosmology** (top of the config column): the multi-plane background, with
+    one slider row per knob — `H0` [km/s/Mpc], `Ωm`, `ΩΛ`, `w0`, `wa` — following
+    the same 🔓/🔒 convention as every parameter.  The knobs default to **locked**:
+    the cosmological background enters the distance computations (so the
+    **time-delay / Fermat fields scale with `1/H0`**, and physical quantities
+    change), but a lensed *image* is cosmology-blind with angular θ_E profiles,
+    so the image-channel fit cannot constrain them.  Unlocking a knob lets the
+    fit sample it via lenstronomy `cosmology_sampling` (harmless, but degenerate
+    for image-only fits); the same astropy `w0waCDM` is used by the fit engine
+    and the renderer, so the two can never disagree about distances.
   - **Multiple lenses**: each with model selection (`SIS` / `SIE` / `SPEP` /
     `PEMD` / `NFW` / `SIS_TRUNCATED`; PEMD only when `fastell4py` is present), own
     parameters (theta_E, shear, ellipticity, center) and **redshift**; add/remove.

@@ -728,6 +728,98 @@ class PointSourcesPanel(_CardListPanel):
                 self.attached_changed.emit(i, desired[i])
 
 
+class CosmologyPanel(QScrollArea):
+    """The cosmological background: H0, Ωm, ΩΛ, w0, wa, one slider row each.
+
+    Follows the same 🔓/🔒 convention as every other parameter.  A locked knob is
+    held exactly (and still feeds the renderer — it changes the time-delay /
+    Fermat fields and the physical-distance computations).  An unlocked knob
+    joins the fit as a free parameter through lenstronomy's
+    ``cosmology_sampling``; note the lensed *image* itself is cosmology-blind
+    (angular θ_E profiles), so the image-channel fit never constrains it.
+    """
+
+    changed = pyqtSignal()
+
+    # (key, label, vmin, vmax, decimals); defaults mirror an astropy w0waCDM
+    # at ΛCDM values (a superset of the library default cosmology).
+    _ROWS = (("H0", "H0", 40.0, 110.0, 0),      # km/s/Mpc
+             ("Om0", "\u03a9m", 0.0, 1.0, 3),
+             ("Ode0", "\u03a9\u039b", 0.0, 1.0, 3),
+             ("w0", "w0", -2.5, 0.5, 2),
+             ("wa", "wa", -1.5, 1.5, 2))
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        body = QWidget()
+        root = QVBoxLayout(body)
+        root.setContentsMargins(6, 6, 6, 6)
+        self.setWidget(body)
+
+        title = QLabel("<b>Cosmology</b>")
+        title.setObjectName("panelTitle")
+        root.addWidget(title)
+        hint = QLabel("H0, Ωm, ΩΛ, w0, wa — unlock 🔓 to fit")
+        hint.setObjectName("panelHint")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        defaults = lc.CosmologyParams()
+        self.sliders: dict = {}
+        for key, label, vmin, vmax, dec in self._ROWS:
+            row = _Slider(label, vmin, vmax, float(getattr(defaults, key)), dec)
+            row.changed.connect(self._emit)
+            row.fixedChanged.connect(self._emit)
+            # Cosmology knobs default to LOCKED: the lensed image cannot
+            # constrain them (angular θ_E profiles), so they would only burn fit
+            # budget on an unidentifiable axis.  Unlock explicitly to explore.
+            row.set_fixed(True)
+            self.sliders[key] = row
+            root.addWidget(row)
+        root.addStretch(1)
+
+    def _emit(self, *a):
+        self.changed.emit()
+
+    def cosmology(self) -> "lc.CosmologyParams":
+        """Snapshot the panel's knobs as a CosmologyParams."""
+        return lc.CosmologyParams(
+            H0=self.sliders["H0"].value(),
+            Om0=self.sliders["Om0"].value(),
+            Ode0=self.sliders["Ode0"].value(),
+            w0=self.sliders["w0"].value(),
+            wa=self.sliders["wa"].value(),
+        )
+
+    def param_spec(self) -> dict:
+        """{(name): (value, lower, upper, fixed)} for the fit engine."""
+        spec = {}
+        for key in ("H0", "Om0", "Ode0", "w0", "wa"):
+            row = self.sliders[key]
+            spec[key] = (row.value(), row.vmin, row.vmax, row.is_fixed())
+        return spec
+
+    def set_values(self, cosmo: "lc.CosmologyParams"):
+        """Push a (fitted) cosmology back onto the unlocked sliders."""
+        for key, row in self.sliders.items():
+            row.set_value(float(getattr(cosmo, key, row.value())))
+
+    def unfix_all(self, *, user: bool = False):
+        for row in self.sliders.values():
+            if row.is_fixed():
+                row.set_fixed(False, user=user)
+
+    def lock_all(self) -> int:
+        """Lock every currently-unlocked knob; returns the number newly locked."""
+        count = 0
+        for row in self.sliders.values():
+            if not row.is_fixed():
+                row.set_fixed(True)
+                count += 1
+        return count
+
+
 class DataBar(QWidget):
     """The external-image file buttons, on their own (separated) section of the
     display row so they do not consume vertical space inside the image panel."""

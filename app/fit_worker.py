@@ -21,13 +21,15 @@ class FitWorker(QThread):
     cancelled = pyqtSignal()                  # user pressed Cancel
 
     def __init__(self, config, data, lens_specs, lens_light_specs, source_specs,
-                 point_source_specs=None, n_particles=30, n_iterations=100,
+                 point_source_specs=None, cosmology_spec=None,
+                 n_particles=30, n_iterations=100,
                  n_restarts=2, sigma_scale=4.0, polish=True,
                  preview_enabled=True, preview_interval=0.5,
                  early_stop_reduced=0.0, parent=None):
         super().__init__(parent)
         self._args = (config, data, lens_specs, lens_light_specs, source_specs,
                       point_source_specs)
+        self._cosmology_spec = cosmology_spec
         # When previews are switched off, pass no callback at all so the fit loop
         # does not touch the renderer.
         self._preview_enabled = bool(preview_enabled)
@@ -51,6 +53,7 @@ class FitWorker(QThread):
         try:
             result = ft.run_pso(
                 *self._args,
+                cosmology_spec=self._cosmology_spec,
                 progress=lambda msg: self.progressed.emit(msg),
                 preview=self._emit_preview if self._preview_enabled else None,
                 is_cancelled=lambda: self._cancelled,

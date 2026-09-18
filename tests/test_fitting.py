@@ -641,3 +641,91 @@ def test_build_data_joint_feeds_effective_noise():
                                          point_source_specs=[])
     assert np.allclose(kwargs_data_joint2["multi_band_list"][0][0]["noise_map"],
                        noise)
+
+
+# ------------------------------------------------------------- cosmology
+
+
+def _cosmo_spec(free=(), h0=70.0, om0=0.3, ode0=0.7, w0=-1.0, wa=0.0):
+    """Full Cosmology-panel spec with only ``free`` knobs unlocked."""
+    spec = {"H0": (h0, 40.0, 110.0, "H0" not in free),
+            "Om0": (om0, 0.0, 1.0, "Om0" not in free),
+            "Ode0": (ode0, 0.0, 1.0, "Ode0" not in free),
+            "w0": (w0, -2.5, 0.5, "w0" not in free),
+            "wa": (wa, -1.5, 1.5, "wa" not in free)}
+    return spec
+
+
+def test_build_setup_cosmology_sampling_special():
+    """Unlocking any cosmology knob turns on lenstronomy cosmology_sampling and
+    wires a kwargs_params['special'] block that carries every knob."""
+    cfg = _truth_config()
+    data = _data_for(cfg)
+    lens_s, ll_s, src_s = _specs(cfg, free_lens=("theta_E",))
+    cosmo_spec = _cosmo_spec(free=("H0",), h0=72.0, om0=0.25)
+    kdj, km, kp, free, fixed = ft.build_setup(
+        cfg, data, lens_s, ll_s, src_s, cosmology_spec=cosmo_spec)
+
+    assert km["cosmology_sampling"] is True
+    assert km["cosmology_model"] == "w0waCDM"
+    # kwargs_model["cosmo"] carries the *config's* cosmology verbatim...
+    assert km["cosmo"] is not None
+    assert abs(float(km["cosmo"].H0.value) - cfg.cosmology.H0) < 1e-9
+    assert abs(float(km["cosmo"].Om0) - cfg.cosmology.Om0) < 1e-9
+    special = kp["special"]
+    init, sigma, fixed_s, lower, upper = special
+    assert init["H0"] == 72.0 and init["Om0"] == 0.25
+    assert fixed_s["Om0"] == 0.25            # locked knob fixed at its value
+    assert "H0" not in fixed_s and "Om0" in fixed_s
+    assert sigma["H0"] > 0 and "H0" in lower and "H0" in upper
+    assert "cosmo.H0" in free and "cosmo.H0" not in fixed
+    assert "cosmo.Om0" in fixed and "cosmo.Om0" not in free
+
+
+def test_build_setup_cosmology_all_locked_no_sampling():
+    """All cosmology knobs locked -> no sampling machinery, but the (possibly
+    edited) cosmology still reaches the fit engine through kwargs_model['cosmo']."""
+    cfg = _truth_config()
+    cfg.cosmology = lc.CosmologyParams(H0=65.0, Om0=0.36)
+    data = _data_for(cfg)
+    lens_s, ll_s, src_s = _specs(cfg, free_lens=("theta_E",))
+    cosmo_spec = _cosmo_spec(h0=65.0, om0=0.36)
+    kdj, km, kp, free, fixed = ft.build_setup(
+        cfg, data, lens_s, ll_s, src_s, cosmology_spec=cosmo_spec)
+    assert "cosmology_sampling" not in km
+    assert "special" not in kp
+    assert not any(n.startswith("cosmo.") for n in free + fixed)
+    assert abs(float(km["cosmo"].H0.value) - 65.0) < 1e-9
+    assert abs(float(km["cosmo"].Om0) - 0.36) < 1e-9
+
+
+def test_run_pso_cosmology_free_single_plane_no_regression():
+    """H0 free on a single plane: the image is H0-blind, so the fit must not
+    regress, must not snap back to the start (hard floor), and must read the
+    sampled H0 back into the result config with locked knobs preserved."""
+    truth = _truth_config()
+    data = _data_for(truth)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=1.10,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+        cosmology=lc.CosmologyParams(H0=70.0),
+    )
+    lens, llight, src = _specs(start, free_lens=("theta_E",))
+    cosmo_spec = _cosmo_spec(free=("H0",))
+    res = ft.run_pso(start, data, lens, llight, src,
+                     cosmology_spec=cosmo_spec,
+                     n_particles=20, n_iterations=40, n_restarts=1, polish=False)
+    assert res.ok, res.error
+    assert "cosmo.H0" in res.free_names
+    # single-plane image is H0-independent -> no improvement *and* no loss
+    assert res.chi2_after <= res.chi2_before + 1e-6
+    # the sampled H0 was read back (not the start value, not a revert)
+    assert res.config.cosmology.H0 != 70.0
+    # locked knobs survived the round-trip
+    assert abs(res.config.cosmology.Om0 - 0.3) < 1e-9
+    assert abs(res.config.cosmology.w0 + 1.0) < 1e-9
+    # the chain records the free cosmology axis
+    assert "cosmo.H0" in res.chain
+    assert len(res.chain["cosmo.H0"]) == len(res.chain_iter)

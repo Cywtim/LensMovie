@@ -1553,8 +1553,8 @@ def test_config_panels_resizeable_via_splitter(qapp):
         assert sp is not None
         assert sp.orientation() == 2  # Qt.Vertical
         widgets = [sp.widget(i) for i in range(sp.count())]
-        assert widgets == [win.lenses_panel, win.sources_panel,
-                           win.point_sources_panel]
+        assert widgets == [win.cosmology_panel, win.lenses_panel,
+                           win.sources_panel, win.point_sources_panel]
         # moving the handle resizes the panels (no crash)
         sizes = sp.sizes()
         sizes[1] += 40
@@ -1684,5 +1684,73 @@ def test_positions_drawn_on_field_and_curve_canvases(qapp):
     # legend gained image + source entries
     labels = [t.get_text() for t in curves._ax.get_legend().get_texts()]
     assert "image" in labels and "source" in labels
+    win.close()
+    win.deleteLater()
+
+
+# ------------------------------------------------------------- cosmology
+
+
+def test_cosmology_panel_present_locked_and_wired(qapp):
+    """The Cosmology panel sits at the top of the config column, defaults to
+    all knobs LOCKED, and its values flow into the built Config."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    panel = win.cosmology_panel
+    assert panel is not None
+    assert win.cfg_split.indexOf(panel) == 0
+
+    spec = panel.param_spec()
+    assert set(spec) == {"H0", "Om0", "Ode0", "w0", "wa"}
+    assert all(v[3] is True for v in spec.values()), "cosmology knobs default locked"
+
+    cfg = win._build_config()
+    assert cfg.cosmology.H0 == 70.0
+    assert cfg.cosmology.Om0 == 0.3 and cfg.cosmology.Ode0 == 0.7
+    assert cfg.cosmology.w0 == -1.0 and cfg.cosmology.wa == 0.0
+    win.close()
+    win.deleteLater()
+
+
+def test_cosmology_h0_slider_scales_time_delay(qapp):
+    """H0 lower by 7/6 must scale the relative time-delay map by ~(1/60)/(1/70),
+    the physical D_dt behaviour — proof the knob reaches the physics."""
+    from app import lensing_calc as lc
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    panel = win.cosmology_panel
+    base = win._build_config()
+    base_sim = lc.compute(base)
+
+    panel.sliders["H0"].set_fixed(False, user=True)
+    panel.sliders["H0"].set_value(60.0)
+    scaled = win._build_config()
+    assert scaled.cosmology.H0 == 60.0
+    scaled_sim = lc.compute(scaled)
+
+    t_ref = base_sim.time_delay
+    t_new = scaled_sim.time_delay
+    ratio = float((t_new[1:-1, 1:-1] / (t_ref[1:-1, 1:-1] + 1e-12)).mean())
+    assert abs(ratio - (1 / 60.0) / (1 / 70.0)) < 0.1
+    win.close()
+    win.deleteLater()
+
+
+def test_lock_all_unlocked_includes_cosmology(qapp):
+    """The fit's lock-everything path also locks the cosmology knobs."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    panel = win.cosmology_panel
+    win._lock_all_unlocked()                 # first pass locks the lens/source sliders
+    # the cosmology knobs are included in the sweep: unlock two of them...
+    panel.sliders["H0"].set_fixed(False, user=True)
+    panel.sliders["Om0"].set_fixed(False, user=True)
+    n = win._lock_all_unlocked()
+    assert n >= 2
+    assert panel.sliders["H0"].is_fixed() and panel.sliders["Om0"].is_fixed()
+    assert win._lock_all_unlocked() == 0     # nothing left unlocked anywhere
     win.close()
     win.deleteLater()
