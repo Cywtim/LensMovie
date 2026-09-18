@@ -521,9 +521,9 @@ def test_external_canvas_show_message_resets_colorbar(qapp):
     cv.deleteLater()
 
 
-def test_observation_gains_noise_when_sigma_map_loaded(qapp, tmp_path):
-    """The displayed image is the clean model until a noise (sigma) map is
-    loaded; then a stable Gaussian realisation is added to what is shown."""
+def test_noise_decorates_lens_image_not_external(qapp, tmp_path):
+    """A loaded noise (sigma) map adds a display-only noise realisation to the
+    "Lens image" model panel, and leaves the external image exactly as loaded."""
     from app.main_window import MainWindow
 
     sigma = 0.05
@@ -537,42 +537,44 @@ def test_observation_gains_noise_when_sigma_map_loaded(qapp, tmp_path):
     win.show()
     qapp.processEvents()
     assert win.load_external_image_file(str(clean_path)) is True
-    # no noise map -> shown image is the clean image, unchanged
-    assert np.allclose(win._external_array, clean)
-    assert "noise" not in win._ext_label.text()
 
+    model = np.zeros((60, 60))
+    # no noise map -> lens image shows the clean model
+    assert np.allclose(win._lens_image_with_noise(model, 60, 0.05), model)
+    # and the external panel shows the loaded image untouched
+    assert np.allclose(win._external_array, clean)
+
+    # load the sigma map
     win.controller.load_aux("noise", str(noise_path))
-    win._rerender()                      # the real "Load noise" flow reschedules
+    win._rerender()
     qapp.processEvents()
-    obs = np.asarray(win._external_array)
-    assert obs.shape == clean.shape
-    assert obs is win._external_array              # cached, deterministic
-    resid = obs - clean
+    # external image is STILL the clean loaded image (no noise added there)
+    assert np.allclose(win._external_array, clean)
+    # the Lens image panel now shows model + noise draw
+    noisy = np.asarray(win._lens_image_with_noise(model, 60, 0.05))
+    resid = noisy - model
     assert abs(resid.std() - sigma) < 0.01 * sigma
-    assert "noise" in win._ext_label.text()
+    # deterministic across re-renders (no flicker)
+    assert np.allclose(win._lens_image_with_noise(model, 60, 0.05), noisy)
     win.close()
     win.deleteLater()
 
 
-def test_fit_data_uses_noisy_observation(qapp):
-    """prepare_fit_data resamples/uses the observation (clean + noise draw), so
-    what is fitted is what is displayed once a noise map is loaded."""
+def test_fit_data_uses_clean_external_not_noise_draw(qapp):
+    """prepare_fit_data fits the loaded image as-is: the noise sigma map weights
+    chi² but is never added to the fitted image."""
     from app.controller import LensMovieController
 
     sigma = 0.02
-    clean = np.zeros((64, 64))
+    clean = np.random.RandomState(3).rand(64, 64)
     ctrl = LensMovieController()
     ctrl.external_array = clean
     ctrl.noise_array = np.full_like(clean, sigma)
     display = {"num_pix": 64, "delta_pix": 0.05, "psf_fwhm": 0.0}
     fd = ctrl.prepare_fit_data(display)
     assert fd is not None
-    resid = np.asarray(fd.image) - clean
-    assert abs(resid.std() - sigma) < 0.01 * sigma
-    # without a noise map the fit data is the plain clean image
-    ctrl.noise_array = None
-    fd2 = ctrl.prepare_fit_data(display)
-    assert np.allclose(fd2.image, clean)
+    assert np.allclose(fd.image, clean, atol=1e-12)   # no noise added to the fit
+    assert fd.noise is not None                        # sigma map is the chi² weight
 
 
 def test_apply_fitted_config_writes_back_but_respects_locks(qapp):

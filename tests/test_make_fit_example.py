@@ -39,22 +39,23 @@ def test_generate_writes_consistent_example(tmp_path, monkeypatch):
     assert cfg["source"]["center_x/y"] == pytest.approx([0.18, 0.08])
 
 
-def test_clean_model_plus_noise_map_reproduces_data(tmp_path):
-    """With the noise-map semantics, loading the CLEAN model as the image and the
-    sigma map as noise must reproduce the pre-made observation exactly.  The
-    controller's draw seed equals the example generator's, so
-    ``model_truth + noise.npy == data.npy`` pixel-for-pixel."""
-    from app.controller import LensMovieController
+def test_make_fit_example_lens_noise_decoration(tmp_path):
+    """The sigma map decorates the Lens image model panel: loading it must not
+    alter ``data.npy``; the panel draw has the right sigma and is deterministic."""
+    from types import SimpleNamespace
+    from app.main_window import MainWindow
 
-    ctrl = LensMovieController()
-    ctrl.external_array = np.load(mfe.OUT / "model_truth.npy")
-    ctrl.noise_array = np.load(mfe.OUT / "noise.npy")
-    observed = np.asarray(ctrl.observation)
-    data = np.load(mfe.OUT / "data.npy")
-    assert observed.shape == data.shape
-    assert np.allclose(observed, data, atol=1e-9), "seeded draw must match example"
-    # deterministic: repeated reads give the identical array
-    assert ctrl.observation is observed
-    # and swapping the noise map gives a *different* draw
-    ctrl.noise_array = np.full(data.shape, mfe.NOISE_SIGMA * 2.0)
-    assert not np.allclose(ctrl.observation, observed)
+    # _lens_image_with_noise only reads self.controller.noise_array, so exercise
+    # the real method on a stub without constructing MainWindow's vispy scene.
+    make = SimpleNamespace(controller=SimpleNamespace(noise_array=None))
+    method = MainWindow._lens_image_with_noise
+
+    model = np.load(mfe.OUT / "model_truth.npy")
+    sig = np.load(mfe.OUT / "noise.npy")
+    sigma = float(sig[0, 0])
+    # without a sigma map the lens image is the clean model
+    assert np.allclose(method(make, model, mfe.NUM_PIX, 0.05), model)
+    make.controller.noise_array = sig
+    noisy = np.asarray(method(make, model, mfe.NUM_PIX, 0.05))
+    assert abs((noisy - model).std() - sigma) < 0.02 * sigma
+    assert np.allclose(method(make, model, mfe.NUM_PIX, 0.05), noisy)

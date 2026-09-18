@@ -171,12 +171,22 @@ class MainWindow(QMainWindow):
 
         # Fitting strip, under the display row (kept in the same left column).
         self.fit_bar = FitBar()
-        # Fixed vertical: never stretch to absorb leftover height in the column.
-        self.fit_bar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.fit_bar.fitRequested.connect(self._start_fit)
         self.fit_bar.cancelRequested.connect(self._cancel_fit)
         self.fit_bar.saveResultRequested.connect(self._save_fit_report)
         self.fit_bar.saveChainRequested.connect(self._save_fit_chain)
+        # The strip's natural width (~1136 px) would otherwise pin the whole left
+        # column, blocking the 3D/external splitter from shrinking it. Like the
+        # display row, wrap it in a scroll area so it compresses and scrolls when
+        # the column narrows.
+        _fit_scroll = QScrollArea()
+        _fit_scroll.setWidgetResizable(True)
+        _fit_scroll.setWidget(self.fit_bar)
+        _fit_scroll.setFrameShape(QFrame.NoFrame)
+        _fit_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        _fit_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._fit_scroll_h = self.fit_bar.sizeHint().height() + 16
+        _fit_scroll.setFixedHeight(self._fit_scroll_h)
 
         # Top area: a left column (3D bar + numPix/display row + fitting strip)
         # side by side with the external panel — the panel therefore spans ALL of
@@ -187,7 +197,7 @@ class MainWindow(QMainWindow):
         lc.setSpacing(0)
         lc.addWidget(self._3d_wrap)
         lc.addWidget(self.display_row)
-        lc.addWidget(self.fit_bar)
+        lc.addWidget(_fit_scroll)
         # Extra height (e.g. the user dragging the row splitter to enlarge the
         # external panel) pools *below* the compact content instead of stretching
         # gaps between the 3D bar / display row / fit strip.
@@ -201,8 +211,6 @@ class MainWindow(QMainWindow):
         self.top_split.setChildrenCollapsible(False)
         self.top_split.addWidget(left_col)
         self.top_split.addWidget(self.ext_panel)
-        self.top_split.setStretchFactor(0, 3)
-        self.top_split.setStretchFactor(1, 1)
         # Seed widths: favour the 3D/left column; the user can then drag.
         self.top_split.setSizes([850, 400])
 
@@ -339,10 +347,10 @@ class MainWindow(QMainWindow):
     # the controller, so the two halves share no mutable state directly.
     @property
     def _external_array(self):
-        # The displayed image is the observation: the loaded (clean) image plus
-        # the noise realisation drawn from the loaded noise map, when one is set
-        # (see ``controller.observation``).  With no noise map it is unchanged.
-        return self.controller.observation
+        # The external panel shows the loaded image exactly as-is.  (A loaded
+        # noise/sigma map is not applied here — noise decorates the "Lens image"
+        # model panel and weights the fit's chi², nothing else.)
+        return self.controller.external_array
 
     @_external_array.setter
     def _external_array(self, value):
@@ -465,15 +473,13 @@ class MainWindow(QMainWindow):
             return False
 
         display = self.display_bar.display()
-        observed = self.controller.observation    # clean + noise draw if loaded
         self.external_canvas.update_external(
-            observed,
-            title=f"External image {observed.shape[0]}x{observed.shape[1]}",
+            array,
+            title=f"External image {array.shape[0]}x{array.shape[1]}",
             colormap=display["colormap"],
             stretch=display["stretch"],
         )
-        note = " (+ noise from the loaded noise map)"
-        self._ext_label.setText(f"{desc}{note if self.controller.noise_array is not None else ''}")
+        self._ext_label.setText(desc)
         self.statusBar().showMessage(f"loaded {desc}", 4000)
         return True
 
@@ -556,10 +562,7 @@ class MainWindow(QMainWindow):
             title=f"External image {self._external_array.shape[0]}"
                   f"x{self._external_array.shape[1]}",
             colormap=cmap, stretch=stretch)
-        desc = getattr(self, "_ext_desc", "no file loaded")
-        if self.controller.noise_array is not None:
-            desc += " (+ noise)"
-        self._ext_label.setText(desc)
+        self._ext_label.setText(getattr(self, "_ext_desc", "no file loaded"))
 
     # ------------------------------------------------------------ fitting
     def _start_fit(self):
@@ -745,6 +748,27 @@ class MainWindow(QMainWindow):
         """The convolution kernel for the model: a loaded kernel, else from FWHM."""
         return self.controller.current_psf_kernel(self.display_bar.display())
 
+    def _lens_image_with_noise(self, model: "np.ndarray", num_pix: int,
+                               delta: float) -> "np.ndarray":
+        """The model image to show in the "Lens image" panel.
+
+        A loaded noise (sigma) map of the same shape as the model grid adds a
+        *display-only* Gaussian noise realisation to the model, so the user can
+        see what the noisy observation looks like without the noise being part of
+        the fit (the fit uses ``external_array`` and the sigma map as the chi²
+        weight).  The draw is deterministic (same seed each render) so the panel
+        never flickers between re-renders.  With no / mismatched sigma map the
+        clean model is returned.
+        """
+        if self.controller.noise_array is None:
+            return model
+        sig = np.asarray(self.controller.noise_array, dtype=float)
+        if sig.shape != (num_pix, num_pix) or not np.any(sig > 0):
+            return model
+        rng = np.random.RandomState(7)     # fixed: stable across re-renders
+        draw = np.where(sig > 0.0, rng.normal(0.0, 1.0, sig.shape) * sig, 0.0)
+        return np.asarray(model, dtype=float) + draw
+
     def _rerender(self):
         config = self._build_config()
         display = self.display_bar.display()
@@ -762,7 +786,8 @@ class MainWindow(QMainWindow):
             image_positions=result.image_positions,
         )
         self.image_canvas.update_image(
-            result.image, num_pix, delta, result.image_positions,
+            self._lens_image_with_noise(result.image, num_pix, delta),
+            num_pix, delta, result.image_positions,
             colormap=display["colormap"], stretch=display["stretch"],
         )
         self.delay_canvas.update_field(

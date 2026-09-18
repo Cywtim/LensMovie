@@ -4,10 +4,18 @@ A ready-to-fit 150×150 arcsec-lensed image (0.05″/px), rendered by LensMovie'
 own forward model and blurred by a 0.12″ PSF, plus Gaussian noise
 (σ = 0.004).  The exact truth is in `truth.json`.
 
+**How noise is used:** loading `noise.npy` (a per-pixel σ map) makes the
+**"Lens image" panel** show a *display-only* noise realisation on top of the
+model, and it supplies the chi² weight for the fit.  It does **not** change the
+**external image** panel (that stays exactly the image you loaded) and it is
+**not** added to the fitted data.
+
 ## How to fit it in the GUI
 
-1. **Load the data**: *Load image…* → `data.npy`
-2. **Load the noise** (chi² needs it): *Load noise…* → `noise.npy`
+1. **Load the data**: *Load image…* → `data.npy` (the observed image, noise included)
+2. **Load the noise** (chi² needs it *and* decorates the Lens image panel):
+   *Load noise…* → `noise.npy` — the "Lens image" panel now shows the model with
+   that σ of noise, and the fit weights each pixel by that σ.
 3. **PSF**: either *Load PSF…* → `psf_kernel.npy`, or set the display "
 "**PSF FWHM = 0.12″** (same kernel, reconstructed analytically)
 4. **Model grid**: NumPix = 150, Δpix = 0.05″ (the data is already on this grid,
