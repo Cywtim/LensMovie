@@ -48,6 +48,7 @@ class LensMovieController(QObject):
     fitPreview = pyqtSignal(int, int, float, object, object)  # iter, total, chi2, sim, config
     fitFinished = pyqtSignal(object)                       # FitResult
     fitFailed = pyqtSignal(str)
+    fitCancelled = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -173,12 +174,14 @@ class LensMovieController(QObject):
         worker.previewed.connect(self.fitPreview)
         worker.finished_ok.connect(self._on_fit_done)
         worker.failed.connect(self._on_fit_failed)
+        worker.cancelled.connect(self._on_fit_cancelled)
         self.fitRunningChanged.emit(True)
         worker.start()
         return True
 
     def cancel_fit(self):
-        """Ask the running fit to stop after the current restart."""
+        """Ask the running fit to stop promptly (between restarts and inside the
+        swarm loop)."""
         if self._fit_worker is not None:
             self._fit_worker.cancel()
 
@@ -189,4 +192,10 @@ class LensMovieController(QObject):
 
     def _on_fit_failed(self, message: str):
         self.fitFailed.emit(message)
+        self.fitRunningChanged.emit(False)
+
+    def _on_fit_cancelled(self):
+        # The worker stops promptly (run_pso polls the cancel flag), so the UI
+        # must be unwound here too, or the strip stays in the running state.
+        self.fitCancelled.emit()
         self.fitRunningChanged.emit(False)

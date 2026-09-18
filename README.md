@@ -36,7 +36,9 @@ Single-window layout:
 - **Fit the model to your data** (lenstronomy's own `FittingSequence`, PSO):
   a **Fit (PSO)** strip with particle / iteration / restart settings. The fit runs
   on a **background thread** (the GUI stays responsive) and only the **unlocked 🔓**
-  parameters are varied — locked ones are held exactly. On completion the
+  parameters are varied — locked ones are held exactly. **Cancel** stops the fit
+  promptly (the fit loop polls the cancel flag between restarts and inside each
+  swarm iteration) and returns the strip to the idle state. On completion the
   best-fit values are written back into the sliders, the strip reports
   `χ² initial → best (free, ndof) + reduced χ²ν`, and the external data panel
   can show **best-fit model** or **residual** through its mode selector.

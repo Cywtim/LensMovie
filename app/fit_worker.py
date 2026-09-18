@@ -18,6 +18,7 @@ class FitWorker(QThread):
     previewed = pyqtSignal(int, int, float, object, object)  # iter, total, chi2, sim, config
     finished_ok = pyqtSignal(object)          # FitResult
     failed = pyqtSignal(str)
+    cancelled = pyqtSignal()                  # user pressed Cancel
 
     def __init__(self, config, data, lens_specs, lens_light_specs, source_specs,
                  point_source_specs=None, n_particles=30, n_iterations=100,
@@ -52,12 +53,16 @@ class FitWorker(QThread):
                 *self._args,
                 progress=lambda msg: self.progressed.emit(msg),
                 preview=self._emit_preview if self._preview_enabled else None,
+                is_cancelled=lambda: self._cancelled,
                 **self._kwargs,
             )
         except Exception as exc:                      # never kill the thread silently
             self.failed.emit(f"{type(exc).__name__}: {exc}")
             return
+        # A cancelled fit must still unwind the UI: emit `cancelled` (never a
+        # silent return, which left the strip permanently in the running state).
         if self._cancelled:
+            self.cancelled.emit()
             return
         if not result.ok:
             self.failed.emit(result.error or "fit failed")

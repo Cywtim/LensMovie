@@ -1092,6 +1092,80 @@ def test_fit_auto_locks_on_good_chi2(qapp):
     win.deleteLater()
 
 
+def test_cancel_fit_unwinds_ui(qapp):
+    """Pressing Cancel must stop the fit promptly AND put the strip back into
+    the idle state (Fit enabled, Cancel disabled, "cancelled" status)."""
+    import time as _time
+
+    from PyQt5.QtCore import QEventLoop, QTimer
+
+    from app import lensing_calc as lc
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    truth = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=1.10,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=[lc.SourceParams(amp=1.0, R_sersic=0.12, n_sersic=3.0,
+                                 e1=0.1, e2=-0.1, center_x=0.08, center_y=-0.06)],
+        num_pix=60, delta_pix=0.05,
+    )
+    mock = lc.compute(truth).image
+    sigma = 0.002
+    win._external_array = mock + np.random.RandomState(3).normal(0, sigma, mock.shape)
+    win._noise_array = np.full(mock.shape, sigma)
+    win.display_bar._numpix.setValue(60)
+    win.display_bar._delta_pix.setValue(0.05)
+    card = win.lenses_panel._cards[0]
+    card._light_combo.setCurrentText("SERSIC_ELLIPSE")
+    for name, val in (("light_amp", 0.6), ("light_R_sersic", 0.9),
+                      ("light_n_sersic", 4.0), ("light_e1", 0.15), ("light_e2", 0.05)):
+        card.sliders[name].set_value(val)
+    card.sliders["theta_E"].set_value(0.85)
+    for name, row in card.sliders.items():
+        if name != "theta_E":
+            row.set_fixed(True)
+    for src_card in win.sources_panel._cards:
+        for row in src_card.sliders.values():
+            row.set_fixed(True)
+
+    # a large budget so Cancel lands while the swarm is still running
+    win.fit_bar._particles.setValue(30)
+    win.fit_bar._iterations.setValue(400)
+    win.fit_bar._restarts.setValue(1)
+
+    win._start_fit()
+    assert win._fit_worker.isRunning() or True   # started (may be mid-start)
+    qapp.processEvents()
+    # wait until the worker thread is actually running, then cancel
+    deadline = _time.time() + 10.0
+    while _time.time() < deadline and not win._fit_worker.isRunning():
+        qapp.processEvents()
+        _time.sleep(0.01)
+    win._cancel_fit()
+
+    loop = QEventLoop()
+    win.controller.fitCancelled.connect(lambda: QTimer.singleShot(10, loop.quit))
+    QTimer.singleShot(60000, loop.quit)          # safety net
+    loop.exec_()
+    # let set_running(False) and the status update land
+    deadline = _time.time() + 10.0
+    while _time.time() < deadline and not win.fit_bar._fit_btn.isEnabled():
+        qapp.processEvents()
+        _time.sleep(0.02)
+    qapp.processEvents()
+
+    # the strip is back in the idle state and reports the cancellation
+    assert win.fit_bar._fit_btn.isEnabled(), "Fit button stayed disabled after cancel"
+    assert not win.fit_bar._cancel_btn.isEnabled(), "Cancel button still armed"
+    assert "cancelled" in win.fit_bar._status.text().lower()
+    assert not win._fit_worker.isRunning(), "worker thread still running after cancel"
+    win.close()
+    win.deleteLater()
+
+
 def test_fit_bar_exposes_preview_settings(qapp):
     """Preview rendering is optional and rate-limited from the UI."""
     from app.controls import FitBar
@@ -1120,6 +1194,74 @@ def test_worker_disables_previews_when_unchecked():
     assert on._preview_enabled is True
     assert off._preview_enabled is False
     assert "preview_interval" in on._kwargs and "preview_interval" in off._kwargs
+
+
+def test_worker_cancel_emits_cancelled(qapp):
+    """Cancelling a running worker must emit `cancelled` (which unwinds the UI),
+    not silently return with no signal at all."""
+    import time as _time
+
+    from PyQt5.QtCore import QEventLoop, QTimer
+
+    from app import lensing_calc as lc
+    from app import fit_data as fd
+    from app.fit_worker import FitWorker
+
+    truth = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=1.10,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=[lc.SourceParams(amp=1.0, R_sersic=0.12, n_sersic=3.0,
+                                 e1=0.1, e2=-0.1, center_x=0.08, center_y=-0.06)],
+        num_pix=60, delta_pix=0.05,
+    )
+    img = lc.compute(truth).image
+    sigma = 0.002
+    data = fd.prepare_fit_data(img + np.random.RandomState(3).normal(0, sigma, img.shape),
+                               source_delta_pix=0.05, model_num_pix=60,
+                               model_delta_pix=0.05, noise=np.full(img.shape, sigma))
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=0.85,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=60, delta_pix=0.05,
+    )
+    lens = {"theta_E": (0.85, 0.3, 2.0, False),
+            "gamma1": (0.04, -0.3, 0.3, True), "gamma2": (-0.02, -0.3, 0.3, True),
+            "e1": (0.15, -0.8, 0.8, True), "e2": (0.05, -0.8, 0.8, True),
+            "gamma": (2.0, 1., 3., True),
+            "center_x": (0., -2, 2, True), "center_y": (0., -2, 2, True)}
+    llight = {"light_R_sersic": (0.9, 0.05, 3.0, True),
+              "light_n_sersic": (4.0, 0.5, 8.0, True),
+              "light_e1": (0.15, -0.8, 0.8, True),
+              "light_e2": (0.05, -0.8, 0.8, True)}
+    src = {"amp": (1.0, 0.05, 5.0, True), "R_sersic": (0.12, 0.01, 1.0, True),
+           "n_sersic": (3.0, 0.5, 8.0, True),
+           "e1": (0.10, -0.8, 0.8, True), "e2": (-0.10, -0.8, 0.8, True),
+           "center_x": (0.08, -2.0, 2.0, True), "center_y": (-0.06, -2.0, 2.0, True)}
+
+    w = FitWorker(start, data, [lens], [llight], [src],
+                  n_particles=25, n_iterations=400, n_restarts=1, preview_enabled=False)
+    got = {"cancelled": [], "done": [], "failed": []}
+    loop = QEventLoop()
+    w.cancelled.connect(lambda: (got["cancelled"].append(1), QTimer.singleShot(10, loop.quit)))
+    w.finished_ok.connect(lambda *a: got["done"].append(a[0]))
+    w.failed.connect(lambda *a: got["failed"].append(a[0]))
+    QTimer.singleShot(60000, loop.quit)      # safety net
+    w.start()
+    # let the swarm get going, then cancel mid-run
+    _time.sleep(0.3)
+    w.cancel()
+    loop.exec_()
+    qapp.processEvents()
+
+    assert got["cancelled"], "cancelled signal was never emitted"
+    assert not got["done"], "a cancelled fit must not report finished_ok"
+    assert not got["failed"], "a cancelled fit must not report failed"
+    assert not w.isRunning(), "worker thread should have ended"
+    w.deleteLater()
 
 
 # ------------------------------------------------- display/data row layout

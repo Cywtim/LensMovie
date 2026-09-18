@@ -334,6 +334,70 @@ def test_run_pso_keeps_improvement_with_free_amplitudes():
     assert 0.5 < res.config.sources[0].amp < 1.5       # truth 1.0
 
 
+def test_run_pso_cancels_promptly():
+    """A set cancel flag must stop the fit almost immediately, not burn the
+    whole restart budget (this is what the GUI Cancel button wires up)."""
+    import time
+
+    np.random.seed(0)
+    truth = _truth_config()
+    data = _data_for(truth)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=0.85, gamma1=0.04, gamma2=-0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+    )
+    lens_s, ll_s, src_s = _specs(start, free_lens=("theta_E",))
+
+    t0 = time.monotonic()
+    res = ft.run_pso(
+        start, data, lens_s, ll_s, src_s,
+        n_particles=25, n_iterations=80, n_restarts=3, polish=True,
+        is_cancelled=lambda: True,
+    )
+    dt = time.monotonic() - t0
+
+    assert res.ok is False
+    assert "cancelled" in (res.error or "").lower()
+    # a full 3-restart fit here takes seconds; a cancel must return in the
+    # build/setup time of a single restart (~sub-second)
+    assert dt < 2.0, f"cancel did not stop the fit promptly ({dt:.2f}s)"
+
+
+def test_run_pso_cancel_mid_swarm_stops_early():
+    """Cancelling inside the swarm loop must drop the remaining PSO iterations
+    rather than run the full budget to completion."""
+    np.random.seed(0)
+    truth = _truth_config()
+    data = _data_for(truth)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=0.85, gamma1=0.04, gamma2=-0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+    )
+    lens_s, ll_s, src_s = _specs(start, free_lens=("theta_E",))
+
+    calls = [0]
+
+    def tripping():
+        calls[0] += 1
+        return calls[0] >= 5          # trip a few checks into the swarm
+
+    res = ft.run_pso(
+        start, data, lens_s, ll_s, src_s,
+        n_particles=25, n_iterations=300, n_restarts=1, polish=False,
+        is_cancelled=tripping,
+    )
+    # It must have returned as cancelled (no candidate kept) rather than
+    # burning the 300-iteration budget and reporting a "fit".
+    assert res.ok is False
+    assert "cancelled" in (res.error or "").lower()
+
+
 def test_run_pso_early_stop_skips_remaining_restarts():
     """early_stop_reduced>0 halts once a restart hits the target reduced chi²."""
     np.random.seed(0)

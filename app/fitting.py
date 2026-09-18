@@ -13,7 +13,7 @@ The module is Qt-independent: the GUI hands in
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -621,7 +621,8 @@ def _chain_values(config: lc.Config, kw: dict, free_names: list) -> dict:
 def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
                             n_particles, n_iterations, sigma_scale,
                             attempt, attempts, say, preview, preview_interval,
-                            free_names, early_stop_chi2=0.0):
+                            free_names, early_stop_chi2=0.0,
+                            is_cancelled=None):
     """Drive lenstronomy's PSO one iteration at a time, reporting progress.
 
     ``FittingSequence.fit_sequence([['PSO', ...]])`` runs the whole swarm in one
@@ -691,6 +692,8 @@ def _run_swarm_with_preview(fs, config, data, ref_source_index, *,
     for it, _ in enumerate(swarm.sample(
             max_iter=int(n_iterations), verbose=False,
             early_stop_tolerance=est)):
+        if is_cancelled is not None and is_cancelled():
+            break                     # user asked to stop mid-swarm: exit promptly
         best_pos = swarm.global_best.position
 
         # Chain bookkeeping first (cheap, needs no rendering): convert the
@@ -744,6 +747,7 @@ def run_pso(
     preview=None,
     preview_interval: float = 0.35,
     early_stop_reduced: float = 0.0,
+    is_cancelled: Optional[Callable[[], bool]] = None,
 ) -> FitResult:
     """Run a PSO fit with lenstronomy's own FittingSequence.
 
@@ -757,6 +761,13 @@ def run_pso(
     lenstronomy's own ``early_stop_tolerance`` halts that swarm and the remaining
     restarts are skipped — a converged fit does not burn the iterations it no
     longer needs.  ``0`` (default) runs every iteration/restart as before.
+
+    ``is_cancelled`` (optional) is a zero-argument predicate checked between
+    restarts, inside each swarm iteration and just before the SIMPLEX polish;
+    once it returns True the fit stops promptly and reports what it has so far
+    (a result scored before the cancel, or ``ok=False, error="fit cancelled"``
+    when the cancel arrived before any restart completed).  This is how the GUI
+    "Cancel" button stops a background fit.
     """
     log = []
 
@@ -798,8 +809,12 @@ def run_pso(
 
     best = None          # (chi2, config, kwargs_result, samples)
     last_error = ""
+    cancelled = False
     attempts = max(1, int(n_restarts))
     for attempt in range(attempts):
+        if is_cancelled is not None and is_cancelled():
+            cancelled = True
+            break
         try:
             fs = FittingSequence(
                 kwargs_data_joint, kwargs_model,
@@ -825,7 +840,11 @@ def run_pso(
                 preview=preview, preview_interval=preview_interval,
                 free_names=free_names,
                 early_stop_chi2=early_stop_chi2,
+                is_cancelled=is_cancelled,
             )
+            if is_cancelled is not None and is_cancelled():
+                cancelled = True
+                break                       # stop before the expensive polish
             # Swarm-stage solution is always a candidate: with the ``init_pos``
             # particle seeded inside the loop it can never be worse than the
             # start, and we keep it if refinement does not help.
@@ -870,7 +889,9 @@ def run_pso(
         best = (chi2_before, config, None, best[3])
 
     if best is None:
-        return FitResult(ok=False, error=last_error or "fit failed", log=log,
+        error = "fit cancelled" if cancelled else (last_error or "fit failed")
+        say(error)
+        return FitResult(ok=False, error=error, log=log,
                          chi2_before=chi2_before)
 
     chi2_after, new_config, _, samples = best

@@ -316,6 +316,7 @@ class MainWindow(QMainWindow):
         self.controller.fitPreview.connect(self._fit_preview)
         self.controller.fitFinished.connect(self._fit_finished)
         self.controller.fitFailed.connect(self._fit_failed)
+        self.controller.fitCancelled.connect(self._fit_cancelled)
         self.controller.statusMessage.connect(self.statusBar().showMessage)
 
         # Throttled redraw.
@@ -647,11 +648,15 @@ class MainWindow(QMainWindow):
 
     def _cancel_fit(self):
         self.controller.cancel_fit()
-        self.fit_bar.set_status("cancelling… (finishes the current restart)")
+        self.fit_bar.set_status("cancelling…")
 
     def _fit_failed(self, message: str):
         self.fit_bar.set_status(f"fit failed: {message}")
         self.statusBar().showMessage(f"fit failed: {message}", 6000)
+
+    def _fit_cancelled(self):
+        self.fit_bar.set_status("fit cancelled")
+        self.statusBar().showMessage("fit cancelled", 3000)
 
     def _fit_finished(self, result):
         # Write the best-fit values back into the sliders so the whole UI shows
