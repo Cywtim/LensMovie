@@ -802,7 +802,18 @@ def run_pso(
     for attempt in range(attempts):
         try:
             fs = FittingSequence(
-                kwargs_data_joint, kwargs_model, {},
+                kwargs_data_joint, kwargs_model,
+                # Disable lenstronomy's analytic linear-solver for the light /
+                # source amplitudes.  With ``linear_solver=True`` (the library
+                # default) the optimizer's -2*logL maximises the *linear-solved*
+                # model, secretly overwriting the amps before scoring, so a fit
+                # can "converge" to amplitudes that LensMovie's own renderer
+                # (and the hard floor/chisq self-check) then sees as a much
+                # worse model — the end-of-fit revert-the-user-described.
+                # The app's amps ARE free parameters (visible sliders), so the
+                # objective must match the app's chisq exactly: raw amps, no
+                # hidden re-solve.  With this, -2*logL(fit) == fd.chi2(render).
+                {"linear_solver": False},
                 {"image_likelihood": True, "check_bounds": True},
                 kwargs_params, verbose=False,
             )

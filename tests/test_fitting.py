@@ -280,6 +280,60 @@ def test_run_pso_emits_converging_previews():
     assert res.reduced_chi2 == pytest.approx(res.chi2_after / res.ndof)
 
 
+def test_run_pso_keeps_improvement_with_free_amplitudes():
+    """The fit must not revert to the start when light/source *amplitudes* and
+    Sérsic shapes are free.
+
+    Regression for the "end-of-fit snap-back": lenstronomy's ImageLikelihood
+    defaults to ``linear_solver=True``, which silently maximises the analytic
+    (best-amplitude) model, so the swarm can "converge" to kwargs whose amps the
+    app's own renderer then scores as much worse than the start — the fit was
+    snapped back to the initial conditions (identical chi² AND identical image).
+    run_pso now disables the linear solver so the objective matches the app's
+    chi² exactly; this test pins that behaviour: real progress must be kept.
+    """
+    np.random.seed(0)
+    truth = _truth_config()
+    data = _data_for(truth)
+    start = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=0.85, gamma1=0.04, gamma2=-0.02,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0,
+                              light_e1=0.15, light_e2=0.05)],
+        sources=truth.sources, num_pix=truth.num_pix, delta_pix=truth.delta_pix,
+    )
+    lens = {"theta_E": (0.85, 0.3, 2.0, False),
+            "gamma1": (0.04, -0.3, 0.3, True), "gamma2": (-0.02, -0.3, 0.3, True),
+            "e1": (0.15, -0.8, 0.8, True), "e2": (0.05, -0.8, 0.8, True),
+            "gamma": (2.0, 1., 3., True),
+            "center_x": (0., -2, 2, True), "center_y": (0., -2, 2, True)}
+    # amplitudes + Sérsic R/n are the free (unlocked) parameters — exactly the
+    # user scenario that previously snapped back to the start at the very end.
+    llight = {"light_amp": (0.6, 0.0, 5.0, False),
+              "light_R_sersic": (0.9, 0.05, 3.0, False),
+              "light_n_sersic": (4.0, 0.5, 8.0, False),
+              "light_e1": (0.15, -0.8, 0.8, True),
+              "light_e2": (0.05, -0.8, 0.8, True)}
+    src = {"amp": (1.0, 0.05, 5.0, False), "R_sersic": (0.12, 0.01, 1.0, False),
+           "n_sersic": (3.0, 0.5, 8.0, False),
+           "e1": (0.10, -0.8, 0.8, True), "e2": (-0.10, -0.8, 0.8, True),
+           "center_x": (0.08, -2.0, 2.0, True), "center_y": (-0.06, -2.0, 2.0, True)}
+
+    res = ft.run_pso(start, data, [lens], [llight], [src],
+                     n_particles=25, n_iterations=80, n_restarts=1, polish=True)
+
+    assert res.ok, res.error
+    # real progress: the fit ends strictly better than where it began
+    assert res.chi2_after < res.chi2_before
+    # ...and the final model is NOT the initial conditions (image/chi² the same)
+    assert res.config.lenses[0].theta_E != start.lenses[0].theta_E
+    assert not np.allclose(res.model, lc.compute(start).image,
+                           rtol=1e-6, atol=1e-8)
+    # the fit actually went to the true lens scale + recovered the source flux
+    assert res.config.lenses[0].theta_E > 1.0          # start 0.85, truth 1.10
+    assert 0.5 < res.config.sources[0].amp < 1.5       # truth 1.0
+
+
 def test_run_pso_early_stop_skips_remaining_restarts():
     """early_stop_reduced>0 halts once a restart hits the target reduced chi²."""
     np.random.seed(0)
