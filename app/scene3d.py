@@ -195,11 +195,14 @@ class Scene3D:
     def _x_of_redshift(self, z, z_max):
         """Map a redshift to an X (line-of-sight) position between observer and source.
 
-        A margin keeps clear gaps between the observer plane, the lens planes and
-        the source plane so the three are visually balanced.
+        A small margin keeps clear gaps between the observer plane, the lens
+        planes and the source plane so the three read apart; the tighter the
+        margin, the further the source-lens and lens-observer gaps (the diagram
+        is meant to be *read*, so planes are pushed toward the centre and the
+        endpoints spread out).
         """
         f = max(0.0, min(1.0, z / z_max))
-        margin = 0.55
+        margin = 0.34
         return -self._L * margin + f * (2 * self._L * margin)
 
     # ------------------------------------------------------- lens mass disks
