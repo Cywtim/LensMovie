@@ -115,3 +115,50 @@ def test_fit_worker_lives_on_the_controller(qapp):
     assert win._fit_worker is win.controller._fit_worker
     win.close()
     win.deleteLater()
+
+
+def test_psf_error_injection_chain(tmp_path):
+    """The exact GUI flow for a PSF-error map: ``load_aux('psf_error', file)``
+    (the 'PSF err…' button) -> ``prepare_fit_data`` carries it into FitData ->
+    ``effective_noise`` inflates σ in quadrature -> χ² divides by the larger σ,
+    so the SAME residual scores a smaller χ² once the PSF error is injected."""
+    import app.fit_data as fd
+    from app.controller import LensMovieController
+
+    c = LensMovieController()
+    shape = (20, 20)
+    mock = np.random.RandomState(0).uniform(0.0, 0.05, shape).astype(float)
+    c.external_array = mock
+    c.noise_array = np.full(shape, 0.002)
+
+    # User clicks "PSF err…": the on-disk map goes through the same loader that
+    # the file dialog drives (controller.load_aux).
+    psf = np.full(shape, 0.003)
+    psf_path = tmp_path / "psf_error.npy"
+    np.save(psf_path, psf)
+    arr, _ = c.load_aux("psf_error", str(psf_path))
+    assert np.allclose(arr, psf) and np.allclose(c.psf_error_array, psf)
+
+    display = {"delta_pix": 0.05, "num_pix": 20, "psf_fwhm": 0.0}
+    d = c.prepare_fit_data(display)
+    assert d is not None
+    assert np.allclose(d.psf_error, psf)
+
+    sigma_eff = fd.effective_noise(d)
+    assert np.allclose(sigma_eff, np.sqrt(0.002 ** 2 + 0.003 ** 2))
+
+    # One fixed residual; the injected PSF error must lower χ² exactly as the
+    # quadrature σ predicts.
+    model = d.image + 0.006
+    resid2 = (np.full(shape, 0.006) / np.sqrt(0.002 ** 2 + 0.003 ** 2)) ** 2
+    assert fd.chi2(model, d) == pytest.approx(float(resid2.sum()))
+
+    # Drop the PSF error and rebuild: narrower σ ⇒ the same residual scores
+    # higher, so the two noise models disagree in the expected direction.
+    c.psf_error_array = None
+    d2 = c.prepare_fit_data(display)
+    assert d2 is not None and d2.psf_error is None
+    without = fd.chi2(model, d2)
+    assert without == pytest.approx(float(((np.full(shape, 0.006) / 0.002) ** 2).sum()))
+    assert without > fd.chi2(model, d)
+    c.deleteLater()
