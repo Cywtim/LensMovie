@@ -137,22 +137,34 @@ def _num(seq, i):
     return "" if not np.isfinite(v) else f"{v:.8g}"
 
 
-def save_chain_png(path: str, result) -> str:
-    """Write a per-parameter trajectory figure (chi² on top, then each free
-    parameter) over the fit's iterations."""
+def build_chain_figure(result, title: str = "fit parameter chain"):
+    """Build (but do not save) the per-parameter trajectory figure: χ² on top,
+    then one subplot per free parameter, over the fit's iterations.
+
+    Uses a plain :class:`matplotlib.figure.Figure` (never pyplot), so the same
+    figure serves the PNG exporter *and* the in-app Chain preview dialog.
+    Returns the (already dark-styled, tight-layouted) figure.
+    """
+    from matplotlib.figure import Figure
+
     names = [n for n in result.chain if len(result.chain[n]) >= 2]
     iters = np.asarray(list(result.chain_iter), dtype=float)
     chi2 = np.asarray(list(result.chain_chi2), dtype=float)
     rows = len(names) + 1
 
     with matplotlib.rc_context(_dark_rc()):
-        fig, axes = plt.subplots(rows, 1, figsize=(7.5, max(1.6 * rows, 2.4)),
-                                 sharex=True)
-        if rows == 1:
-            axes = [axes]
+        fig = Figure(figsize=(7.5, max(1.6 * rows, 2.4)))
+        axes = []
+        first = None
+        for i in range(rows):
+            ax = fig.add_subplot(rows, 1, i + 1) if first is None \
+                else fig.add_subplot(rows, 1, i + 1, sharex=first)
+            axes.append(ax)
+            if first is None:
+                first = ax
         axes[0].plot(iters, chi2, color="#4fc3f7", lw=1.4)
         axes[0].set_ylabel("χ²", fontsize=9)
-        axes[0].set_title("fit parameter chain", fontsize=10)
+        axes[0].set_title(title, fontsize=10)
         for ax, nm in zip(axes[1:], names):
             vals = np.asarray([float(v) for v in result.chain[nm]])
             ax.plot(iters, vals, color="#ffb74d", lw=1.2)
@@ -161,8 +173,15 @@ def save_chain_png(path: str, result) -> str:
         for ax in axes:
             ax.tick_params(labelsize=7)
         fig.tight_layout()
+        return fig
+
+
+def save_chain_png(path: str, result) -> str:
+    """Write the per-parameter trajectory figure (χ² on top, then each free
+    parameter) over the fit's iterations."""
+    fig = build_chain_figure(result)
+    with matplotlib.rc_context(_dark_rc()):
         fig.savefig(path, dpi=150)
-        plt.close(fig)
     return path
 
 

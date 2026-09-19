@@ -162,3 +162,18 @@ def test_report_includes_chi2_panel_and_diagnostic(tmp_path, monkeypatch):
     assert "χ²" in captured["title"] and "PSF" in captured["title"] or "noise" \
         in captured["title"]
     assert tmp_path.joinpath("r4.png").stat().st_size > 1000
+
+
+def test_build_chain_figure_layout():
+    """build_chain_figure yields χ² on top and one subplot per free parameter —
+    the figure the PNG exporter and the GUI preview both render from."""
+    res = _result_with_chain()
+    fig = exp.build_chain_figure(res)
+    try:
+        assert len(fig.axes) == 3                     # 1 χ² + 2 free params
+        assert len(fig.axes[0].lines) == 1            # the χ² trajectory
+        assert len(fig.axes[1].lines) == 1 and len(fig.axes[2].lines) == 1
+        fig.canvas.draw()
+    finally:
+        import matplotlib.pyplot as plt
+        plt.close(fig)

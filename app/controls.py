@@ -866,6 +866,7 @@ class FitBar(QWidget):
     cancelRequested = pyqtSignal()
     saveResultRequested = pyqtSignal()
     saveChainRequested = pyqtSignal()
+    chainPreviewRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -974,6 +975,13 @@ class FitBar(QWidget):
             "parameter) as CSV plus a trajectory figure PNG"
         )
         self._save_chain_btn.clicked.connect(self.saveChainRequested)
+        self._chain_btn = QPushButton("Chain…")
+        self._chain_btn.setEnabled(False)
+        self._chain_btn.setToolTip(
+            "Preview the per-parameter trajectory figure of the finished fit "
+            "(χ² on top, each free parameter below)"
+        )
+        self._chain_btn.clicked.connect(self.chainPreviewRequested)
 
         lay.addWidget(self._fit_btn)
         lay.addWidget(self._cancel_btn)
@@ -994,6 +1002,7 @@ class FitBar(QWidget):
         lay.addWidget(self._lock_chk)
         lay.addWidget(self._lock_val)
         lay.addSpacing(8)
+        lay.addWidget(self._chain_btn)
         lay.addWidget(self._save_result_btn)
         lay.addWidget(self._save_chain_btn)
         lay.addSpacing(12)
@@ -1009,9 +1018,10 @@ class FitBar(QWidget):
             self.set_has_result(False)
 
     def set_has_result(self, has: bool):
-        """Enable the export buttons once a successful fit result exists."""
+        """Enable the export / preview buttons once a fit result exists."""
         self._save_result_btn.setEnabled(has)
         self._save_chain_btn.setEnabled(has)
+        self._chain_btn.setEnabled(has)
 
     def set_status(self, text: str):
         self._status.setText(text)

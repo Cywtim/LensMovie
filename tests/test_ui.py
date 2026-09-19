@@ -1844,3 +1844,34 @@ def test_chi2_map_mode_flags_underestimated_sigma(qapp):
     assert "underestimated" in label
     win.close()
     win.deleteLater()
+
+
+def test_chain_preview_button_and_dialog(qapp):
+    """'Chain…' enables with a finished fit and opens the trajectory preview,
+    which carries the same figure layout as the exported PNG."""
+    from app import fitting as ft
+    from app.main_window import _ChainPreviewDialog, MainWindow
+
+    win = MainWindow()
+    res = ft.FitResult(
+        ok=True, chi2_before=90.0, chi2_after=2.5, n_free=2, ndof=10,
+        reduced_chi2=0.25,
+        chain_iter=[1, 2, 3], chain_chi2=[9.0, 4.5, 2.5],
+        chain={"lens0.theta_E": [0.6, 0.63, 0.64],
+               "source0.amp": [1.0, 1.01, 1.02]},
+    )
+    win.controller.fit_data = None
+    win.controller.fit_result = res
+    assert not win.fit_bar._chain_btn.isEnabled()
+    win.fit_bar.set_has_result(True)
+    assert win.fit_bar._chain_btn.isEnabled()
+
+    dlg = _ChainPreviewDialog(res, win)
+    try:
+        assert len(dlg._fig.axes) == 3
+        dlg.show()
+        dlg.accept()
+    finally:
+        dlg.close()
+        win.close()
+        win.deleteLater()

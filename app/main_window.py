@@ -31,6 +31,7 @@ from PyQt5.QtCore import QTimer
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -177,6 +178,7 @@ class MainWindow(QMainWindow):
         self.fit_bar.cancelRequested.connect(self._cancel_fit)
         self.fit_bar.saveResultRequested.connect(self._save_fit_report)
         self.fit_bar.saveChainRequested.connect(self._save_fit_chain)
+        self.fit_bar.chainPreviewRequested.connect(self._show_chain_preview)
         # The strip's natural width (~1136 px) would otherwise pin the whole left
         # column, blocking the 3D/external splitter from shrinking it. Like the
         # display row, wrap it in a scroll area so it compresses and scrolls when
@@ -819,6 +821,18 @@ class MainWindow(QMainWindow):
         self._ext_mode.setCurrentText("best-fit model")
         self._rerender()
 
+    def _show_chain_preview(self):
+        """Open the in-app per-parameter trajectory preview for the last fit."""
+        result = self.controller.fit_result
+        if result is None or not result.ok:
+            self.fit_bar.set_status("run a fit first to preview its chain")
+            return
+        if not result.chain_iter:
+            self.fit_bar.set_status("no parameter chain recorded")
+            return
+        dlg = _ChainPreviewDialog(result, self)
+        dlg.exec_()
+
     def _apply_fitted_config(self, config: lc.Config):
         """Push fitted lens/source values back into the panel sliders."""
         self.cosmology_panel.set_values(config.cosmology)
@@ -965,3 +979,42 @@ class MainWindow(QMainWindow):
             f"grid={num_pix}²  ref_z={result.ref_z_source:.2f}", 3000
         )
         self._render_ok = True
+
+
+class _ChainPreviewDialog(QDialog):
+    """Shows the finished fit's parameter trajectories in-app (no file needed).
+
+    Reuses the same figure the PNG exporter writes (build_chain_figure), so the
+    preview and the saved image can never disagree.
+    """
+
+    def __init__(self, result, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Fit parameter chain")
+        self.setMinimumSize(560, 320)
+
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+
+        from .export_fit import build_chain_figure
+        self._fig = build_chain_figure(
+            result, title="fit parameter chain (χ² on top, free params below)")
+        canvas = FigureCanvasQTAgg(self._fig)
+        canvas.setMinimumHeight(320)
+
+        lay = QVBoxLayout(self)
+        lay.addWidget(canvas, 1)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        lay.addWidget(close)
+
+        n = len([k for k in result.chain if len(result.chain[k]) >= 2])
+        self.resize(760, max(380, 90 + 44 * n))
+
+    def closeEvent(self, event):
+        try:
+            self._fig.clear()
+            import matplotlib.pyplot as plt
+            plt.close(self._fig)
+        except Exception:
+            pass
+        super().closeEvent(event)
