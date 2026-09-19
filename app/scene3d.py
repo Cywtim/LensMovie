@@ -110,6 +110,7 @@ class Scene3D:
         # Geometry bounds at init time (updated per frame too).
         self._L = 2.4            # half line-of-sight (x) extent
         self._half = 2.6         # sky (y/z) half extent
+        self._image_bundle = 5   # rays drawn per solved image (visual density)
 
         self._rays = []
         self._blobs = []
@@ -289,17 +290,29 @@ class Scene3D:
         return nodes
 
     def _add_rays(self, config, result):
-        """One true light path per solved image (plus source & image markers).
+        """One small bundle of true light rays per solved image.
 
-        This is the physically real ray-trace: all images of a source share the
-        same source point, are bent at the real lens-plane crossings, and land at
-        their observed image positions at the observer plane — the standard
-        multiple-image diagram.
+        A point source has exactly as many real rays as it has multiple images;
+        to make the diagram read with more density, each image is drawn as a
+        bundle of ``_rays_per_image`` rays at tiny offsets around the image's
+        observed position (each a real raytrace).  All rays leave the shared
+        source point, bend at the true lens-plane crossings, and converge on the
+        single observer point.  The bright image marker is placed at the first
+        lens-plane crossing of the central ray.
         """
         cmap = _SOURCE_COLORS
         z_max = max([l.redshift for l in config.lenses] + [0.3])
         z_lenses = sorted([l.redshift for l in config.lenses])
         cosmo = config.cosmology.astropy_cosmo()
+        # small observed-position offsets around an image -> a tight, dense tube
+        bundle = self._image_bundle
+        d = max(min(abs(l.theta_E) if l.model != "NFW" else abs(l.alpha_Rs)
+                    for l in config.lenses) * 0.12, 0.04) if config.lenses else 0.04
+        offs = [(0.0, 0.0),
+                (d, 0.0), (-d, 0.0), (0.0, d), (0.0, -d),
+                (0.707 * d, 0.707 * d), (-0.707 * d, 0.707 * d),
+                (0.707 * d, -0.707 * d), (-0.707 * d, -0.707 * d)]
+        offs = offs[:bundle]
 
         self._rays = []
         src_pts, src_cols = [], []
@@ -318,21 +331,21 @@ class Scene3D:
             ra_arr, dec_arr, _ = result.image_positions[si]
             for ra_img, dec_img in zip(np.atleast_1d(ra_arr),
                                        np.atleast_1d(dec_arr)):
-                nodes = self._true_ray_nodes(
-                    mp, kwargs_lens, z_max, z_lenses,
-                    sy, sz, ra_img, dec_img)
-                path = _spline_path(nodes)
-                self._rays.append(
-                    visuals.Line(pos=path.astype(np.float32), color=color,
-                                 width=2.2, connect="strip",
-                                 parent=self.view.scene)
-                )
-                # image point = first lens-plane crossing (the image plane); for
-                # a single (or first) lens plane this is the observed sky pos,
-                # correctly located where the image forms rather than on the
-                # converging observer plane.
-                if len(nodes) >= 3:
-                    img_pts.append(list(nodes[1]))
+                central_nodes = None
+                for dra, ddec in offs:
+                    nodes = self._true_ray_nodes(
+                        mp, kwargs_lens, z_max, z_lenses,
+                        sy, sz, ra_img + dra, dec_img + ddec)
+                    self._rays.append(
+                        visuals.Line(pos=_spline_path(nodes).astype(np.float32),
+                                     color=color, width=2.2, connect="strip",
+                                     parent=self.view.scene)
+                    )
+                    if abs(dra) + abs(ddec) == 0.0:
+                        central_nodes = nodes
+                # image point = first lens-plane crossing of the central ray
+                if central_nodes is not None and len(central_nodes) >= 3:
+                    img_pts.append(list(central_nodes[1]))
                     img_cols.append(color)
 
         if src_pts:

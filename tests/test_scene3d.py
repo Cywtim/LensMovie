@@ -107,7 +107,8 @@ def test_add_rays_draws_one_true_path_per_image(_app):
         res = lc.compute(cfg)
         scene.update_scene(cfg, res, show_mass_disks=False)
         n_img = len(res.image_positions[0][0])
-        assert len(scene._rays) == n_img          # one real ray per image
+        # a small bundle of rays per image (density), all leaving the source
+        assert len(scene._rays) == n_img * scene._image_bundle
         src = cfg.sources[0]
         for ray in scene._rays:
             v0 = np.asarray(ray.pos[0])

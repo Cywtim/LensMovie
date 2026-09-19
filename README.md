@@ -19,7 +19,9 @@ Single-window layout:
   actual multi-plane lensing: every image's ray leaves the same source point,
   bends at the true lens-plane crossings, and **all rays converge on the single
   observer point**, with bright markers at each image's first lens-plane crossing
-  (the image plane) — the standard multiple-image diagram. The default camera is
+  (the image plane). Each image is drawn as a small **bundle of rays** (a few
+  tight offsets around it) so the light paths read with density — the standard
+  multiple-image diagram. The default camera is
   a side-on view (drag to rotate, scroll to zoom). Rays bend smoothly at each
   lens plane (Catmull-Rom, for display) instead of kinking sharply. **Controls**:
   left-drag rotate, right-drag / scroll zoom, **middle-drag** or **Shift+left-drag**
