@@ -6,6 +6,8 @@ you adjust parameters with sliders.
 
 ![LensMovie interface](img/lensmovie_dark.png)
 
+![LensMovie demo](img/VideoSnap_Sequence%2001.gif)
+
 ## Features
 Single-window layout:
 - **Top — 3D scene** (Vispy, GPU), full width and **edge-on** along the line of
