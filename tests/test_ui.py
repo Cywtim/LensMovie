@@ -1773,3 +1773,74 @@ def test_fit_finished_status_shows_reduced_chi2_and_diagnostic(qapp):
     assert "PSF" in status or "residual" in status or "noise" in status
     win.close()
     win.deleteLater()
+
+
+def _win_with_fit_data(qapp):
+    """A MainWindow carrying a 60x60 mock on the model grid ready to fit."""
+    from app import lensing_calc as lc
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    truth = lc.Config(
+        lenses=[lc.LensParams(model="SIS", theta_E=1.10,
+                              light_model="SERSIC_ELLIPSE", light_amp=0.6,
+                              light_R_sersic=0.9, light_n_sersic=4.0)],
+        sources=[lc.SourceParams(amp=1.0, R_sersic=0.12, n_sersic=3.0,
+                                 center_x=0.08, center_y=-0.06)],
+        num_pix=60, delta_pix=0.05)
+    mock = lc.compute(truth).image
+    win._external_array = mock + np.random.RandomState(3).normal(0, 0.002, mock.shape)
+    win._noise_array = np.full(mock.shape, 0.002)
+    win.display_bar._numpix.setValue(60)
+    win.display_bar._delta_pix.setValue(0.05)
+    return win, truth
+
+
+def test_chi2_map_mode_localizes_excess(qapp):
+    """The chi2 map keeps the total χ² and pinpoints the worst pixels; a single
+    hot pixel with reduced χ² ≫ 1 yields the 'concentrated' diagnostic."""
+    from app import fitting as ft
+    from app.main_window import MainWindow
+
+    win, truth = _win_with_fit_data(qapp)
+    fdata = win.prepare_fit_data()
+    model = fdata.image.copy()
+    model[10, 10] += 0.03                       # one bad pixel only
+    r = ft.FitResult(ok=True, config=truth, model=model,
+                     residual=fdata.image - model, chi2_before=20000.0,
+                     chi2_after=20000.0, n_free=1, ndof=fdata.usable_pixels(),
+                     reduced_chi2=20000.0 / fdata.usable_pixels())
+    win._fit_result = r
+    win._ext_mode.setCurrentText("chi2 map")
+    win._update_external_view(r, win.display_bar.display())
+
+    label = win._ext_label.text()
+    assert "χ² map" in label
+    # (0.03/0.002)^2 = 225 at the lone hotspot; the total equals that pixel
+    assert "max 225" in label
+    assert "concentrated" in label
+    assert "chi2 map" in win._ext_mode.currentText()
+    win.close()
+    win.deleteLater()
+
+
+def test_chi2_map_mode_flags_underestimated_sigma(qapp):
+    """A tiny residual spread over ~every pixel is read as σ underestimated."""
+    from app import fitting as ft
+    from app.main_window import MainWindow
+
+    win, truth = _win_with_fit_data(qapp)
+    fdata = win.prepare_fit_data()
+    model = fdata.image + 0.004                 # ~2σ everywhere
+    r = ft.FitResult(ok=True, config=truth, model=model,
+                     residual=fdata.image - model, chi2_before=20000.0,
+                     chi2_after=fdata.usable_pixels() * 4.0, n_free=1,
+                     ndof=fdata.usable_pixels(),
+                     reduced_chi2=4.0)
+    win._fit_result = r
+    win._ext_mode.setCurrentText("chi2 map")
+    win._update_external_view(r, win.display_bar.display())
+    label = win._ext_label.text()
+    assert "underestimated" in label
+    win.close()
+    win.deleteLater()

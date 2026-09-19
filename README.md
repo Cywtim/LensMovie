@@ -41,7 +41,11 @@ Single-window layout:
   swarm iteration) and returns the strip to the idle state. On completion the
   best-fit values are written back into the sliders, the strip reports
   `χ² initial → best (free, ndof) + reduced χ²ν`, and the external data panel
-  can show **best-fit model** or **residual** through its mode selector.
+  can show **best-fit model**, **residual**, or a per-pixel **chi2 map**
+  (`((data−model)/σ)²`, with the total, worst pixel and the share of pixels
+  above 1 — plus a hint whether the excess is spread everywhere, i.e. σ
+  underestimated, or concentrated, i.e. a model component missing) through its
+  mode selector.
   The raw χ² is a per-pixel sum and grows with the grid (150×150 → ≈22 500 even
   for a perfect model), so judge fits by the **reduced χ²ν ≈ 1**.  When χ²ν
   clearly departs from 1 the strip appends a ⚠ diagnostic: χ²ν≫1 usually means

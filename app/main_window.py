@@ -117,7 +117,8 @@ class MainWindow(QMainWindow):
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("show:"))
         self._ext_mode = QComboBox()
-        self._ext_mode.addItems(["data", "on model grid", "best-fit model", "residual"])
+        self._ext_mode.addItems(["data", "on model grid", "best-fit model",
+                                 "residual", "chi2 map"])
         self._ext_mode.setToolTip(
             "data = raw file; on model grid = resampled (checks alignment);\n"
             "best-fit model / residual = available after a fit")
@@ -561,6 +562,41 @@ class MainWindow(QMainWindow):
             rms = float(np.sqrt(np.mean(np.asarray(resid) ** 2)))
             self._ext_label.setText(f"residual rms = {rms:.4g}")
             return
+
+        if mode == "chi2 map" and self._fit_result is not None:
+            from .fit_data import effective_noise
+            fdata = self.prepare_fit_data()
+            model = self._fit_result.model
+            if fdata is not None and fdata.noise is not None and model is not None \
+                    and model.shape == fdata.image.shape:
+                eff = effective_noise(fdata)
+                chi2map = ((np.asarray(fdata.image) - np.asarray(model)) / eff) ** 2
+                # Blank masked pixels (NaN) so hotspots and the totals only
+                # count the pixels that actually participate in the fit.
+                if fdata.mask is not None:
+                    chi2map = np.ma.masked_where(
+                        ~np.asarray(fdata.mask, dtype=bool), chi2map)
+                self.external_canvas.update_external(
+                    np.ma.filled(chi2map, np.nan), title="Per-pixel \u03c7\u00b2"
+                    " ((data\u2212model)/\u03c3)\u00b2", colormap=cmap,
+                    stretch="linear")
+                used = chi2map.compressed() if np.ma.isMaskedArray(chi2map) \
+                    else np.asarray(chi2map).ravel()
+                total = float(np.sum(used, dtype=float))
+                exceed = float(np.mean(used > 1.0))
+                label = (f"\u03c7\u00b2 map  \u03a3 {total:.4g}"
+                         f" (fit {self._fit_result.chi2_after:.4g})"
+                         f"  max {used.max():.3g}  >1: {exceed:.1%}")
+                rv = self._fit_result.reduced_chi2
+                if rv > 1.3:
+                    if exceed > 0.2:
+                        label += " \u2014 excess spread everywhere (\u03c3 "
+                        label += "likely underestimated)"
+                    else:
+                        label += " \u2014 excess concentrated: a model component"
+                        label += " may be missing"
+                self._ext_label.setText(label)
+                return
 
         if mode == "on model grid":
             fd = self.prepare_fit_data()
