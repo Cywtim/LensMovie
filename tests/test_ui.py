@@ -1869,6 +1869,10 @@ def test_chain_preview_button_and_dialog(qapp):
     dlg = _ChainPreviewDialog(res, win)
     try:
         assert len(dlg._fig.axes) == 3
+        # the in-app preview carries the headline summary incl. reduced χ²ν
+        assert "χ²ν" in dlg.summary_label.text()
+        assert "0.25" in dlg.summary_label.text()
+        assert "overestimated" in dlg.summary_label.text()   # χ²ν<0.7 hint fires
         dlg.show()
         dlg.accept()
     finally:

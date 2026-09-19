@@ -996,12 +996,27 @@ class _ChainPreviewDialog(QDialog):
         from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 
         from .export_fit import build_chain_figure
+
+        lay = QVBoxLayout(self)
+
+        # Headline fit summary on top: the raw χ² needs its grid- and
+        # noise-independent reduced χ²ν (and the noise diagnostic) to read well.
+        summary = (f"\u03c7\u00b2  {result.chi2_before:.4g}"
+                   f" \u2192 {result.chi2_after:.4g}"
+                   f"    reduced \u03c7\u00b2\u03bd  {result.reduced_chi2:.3g}"
+                   f"    ({result.n_free} free, ndof {result.ndof})")
+        hint = result.noise_hint()
+        if hint:
+            summary += "    \u26a0 " + hint
+        self.summary_label = QLabel(summary)
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setObjectName("chainSummary")
+        lay.addWidget(self.summary_label)
+
         self._fig = build_chain_figure(
             result, title="fit parameter chain (χ² on top, free params below)")
         canvas = FigureCanvasQTAgg(self._fig)
         canvas.setMinimumHeight(320)
-
-        lay = QVBoxLayout(self)
         lay.addWidget(canvas, 1)
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
