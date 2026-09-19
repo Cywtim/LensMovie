@@ -50,10 +50,9 @@ def test_spline_path_smooths_a_sharp_kink():
     assert np.degrees(turn.max()) < 30, "corner not smoothed"
 
 
-def test_ray_path_emits_from_source_centre_and_deflects(_app):
-    """A light ray leaves the source centre and fans by *direction*, then
-    deflects toward the lens centre (numeric interior: the spline smoothness
-    itself is covered by test_spline_path_smooths_a_sharp_kink)."""
+def test_true_ray_nodes_link_source_lens_plane_and_image(_app):
+    """A solved image's real light path joins the source point, the lens-plane
+    crossing where it bends, and the image point at the observer plane."""
     import app.scene3d as s3
     from app import lensing_calc as lc
 
@@ -63,28 +62,39 @@ def test_ray_path_emits_from_source_centre_and_deflects(_app):
         pytest.skip(f"no GL context: {exc}")
     try:
         cfg = lc.Config()                       # SIS θ_E=1 at z=0.5, source at z=1.5
+        cosmo = cfg.cosmology.astropy_cosmo()
+        res = lc.compute(cfg)
+        src = cfg.sources[0]
+        lm, kw = lc._get_lens_model(cfg.lenses, src.redshift, cosmo)
+        mp = lm.lens_model
         z_max = max([l.redshift for l in cfg.lenses] + [0.3])
-
-        # launched from the centre with a small z fan
-        no_lens_z = 0.3 * (2 * scene._L)         # undeflected z-spread at observer
-        path = scene._ray_path(list(cfg.lenses), z_max,
-                               sy=0.0, sz=0.0, vy=0.0, vz=0.3)
-
-        # dense; every ray leaves the SAME source point (the centre)
-        assert len(path) >= 60
-        assert np.allclose(path[0], [scene._L, 0.0, 0.0])
-        assert np.isclose(path[-1, 0], -scene._L)
-
-        # the lens pulls the ray toward z=0 (deflects it), so it arrives at the
-        # observer with less z excursion than the free (no-lens) fan
-        assert 0.0 < abs(path[-1, 2]) < no_lens_z - 0.1
+        z_lenses = sorted([l.redshift for l in cfg.lenses])
+        ra_i, dec_i, _ = res.image_positions[0]
+        nodes = scene._true_ray_nodes(mp, kw, z_max, z_lenses,
+                                      src.center_y, src.center_x,
+                                      ra_i[0], dec_i[0])
+        # node 0 = common source point (same X=+L, Y=dec, Z=ra of the source)
+        assert np.allclose(nodes[0], [scene._L, src.center_y, src.center_x])
+        # one node per lens plane in between, at that lens' X
+        n_planes = len(z_lenses)
+        assert len(nodes) == n_planes + 2
+        for k, z in enumerate(z_lenses):
+            assert np.isclose(nodes[k + 1][0],
+                              scene._x_of_redshift(z, z_max))
+        # last node = the image point at the observer plane, at sky (ra, dec)
+        assert np.isclose(nodes[-1][0], -scene._L)
+        assert np.isclose(nodes[-1][1], dec_i[0])
+        assert np.isclose(nodes[-1][2], ra_i[0])
+        # the bends are rounded smooth and dense: (n_nodes-1)*22 samples + 1
+        path = s3._spline_path(nodes)
+        assert len(path) == (len(nodes) - 1) * 22 + 1
     finally:
         scene.close()
 
 
-def test_add_rays_all_leave_the_source_together(_app):
-    """Every ray of one source starts at the same point — the source centre —
-    and only differs by its initial direction (the fan)."""
+def test_add_rays_draws_one_true_path_per_image(_app):
+    """One ray per solved image: it starts at the shared source point, bends at
+    the real lens-plane crossings, and lands at an image point at the observer."""
     import app.scene3d as s3
     from app import lensing_calc as lc
 
@@ -93,16 +103,22 @@ def test_add_rays_all_leave_the_source_together(_app):
     except Exception as exc:
         pytest.skip(f"no GL context: {exc}")
     try:
-        cfg = lc.Config(sources=[lc.SourceParams(center_x=0.1, center_y=-0.2)])
-        scene._n_rays = 5
-        scene._add_rays(cfg)
-        # each of the 5 rays starts at the source centre (center_y, center_x)
-        assert len(scene._rays) == 5
+        cfg = lc.Config(sources=[lc.SourceParams(center_x=0.12, center_y=0.08)])
+        res = lc.compute(cfg)
+        scene.update_scene(cfg, res, show_mass_disks=False)
+        n_img = len(res.image_positions[0][0])
+        assert len(scene._rays) == n_img          # one real ray per image
+        src = cfg.sources[0]
         for ray in scene._rays:
-            v0 = ray.pos[0]
-            assert np.isclose(v0[0], scene._L)
-            assert np.isclose(v0[1], -0.2)      # center_y
-            assert np.isclose(v0[2], 0.1)       # center_x
+            v0 = np.asarray(ray.pos[0])
+            assert np.isclose(v0[0], scene._L)        # starts on the source plane
+            assert np.isclose(v0[1], src.center_y)    # at the source centre
+            assert np.isclose(v0[2], src.center_x)
+            vend = np.asarray(ray.pos[-1])
+            assert np.isclose(vend[0], -scene._L)     # lands at the observer plane
+        # image markers sit at the observer plane, one per solved image
+        assert scene._image_markers is not None
+        assert len(scene._image_markers._data["a_position"]) == n_img
     finally:
         scene.close()
 

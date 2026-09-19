@@ -110,12 +110,12 @@ class Scene3D:
         # Geometry bounds at init time (updated per frame too).
         self._L = 2.4            # half line-of-sight (x) extent
         self._half = 2.6         # sky (y/z) half extent
-        self._n_rays = 5
 
         self._rays = []
         self._blobs = []
         self._lens_disks = []
         self._markers = None
+        self._image_markers = None
         self._point_markers = None
         self._add_axes()
         self.update_scene(lc.Config(), _empty_result())
@@ -160,7 +160,7 @@ class Scene3D:
         (e.g. to declutter the rays); rays and source blobs are always drawn.
         """
         for v in (self._rays, self._markers, self._blobs,
-                  self._lens_disks, self._point_markers):
+                  self._lens_disks, self._image_markers, self._point_markers):
             items = v if isinstance(v, list) else [v]
             for item in items:
                 if item is not None:
@@ -170,6 +170,7 @@ class Scene3D:
                         pass
         self._rays, self._markers, self._blobs = [], None, []
         self._lens_disks = []
+        self._image_markers = None
         self._point_markers = None
 
         z_max = max([l.redshift for l in config.lenses] + [0.3])
@@ -184,7 +185,7 @@ class Scene3D:
         # One extended source blob per source, on the source plane.
         for si, source in enumerate(config.sources):
             self._blobs.append(self._make_source_blob(source, si))
-        self._add_rays(config)
+        self._add_rays(config, result)
         self._add_point_markers(config)
         # NB: the camera centre is deliberately NOT reset here, so a pan (middle-
         # drag / SHIFT+LMB) survives parameter changes instead of snapping back.
@@ -260,75 +261,88 @@ class Scene3D:
         return mesh
 
     # ------------------------------------------------------------------ rays
-    def _ray_path(self, lenses, z_max, sy, sz, vy, vz, dw=0.22):
-        """One light ray emitted from the **source centre**, fanning out with an
-        initial sky direction (vy, vz) (offset per unit x).
+    def _true_ray_nodes(self, mp, kwargs_lens, z_max, z_lenses,
+                        sy, sz, ra_img, dec_img):
+        """The REAL light-path nodes for one solved image.
 
-        All rays of a source start at the same point (sy, sz) on the source plane
-        — light leaving a source — and differ only by their initial direction.
-        Each leg propagates straight; at a lens plane the ray's sky position is
-        pulled toward the lens centre by an Einstein-scale ``bend`` (a parallel-
-        shift display bend, exactly the geometry the previous version used, so
-        the multi-image shape is preserved).  The arrive/leave pair ``dw`` either
-        side of the plane lets the Catmull-Rom spline round the kink into a
-        smooth bend.
+        Starting from the observed image position (ra_img, dec_img), the
+        backwards light cone is traced plane-by-plane with the true multi-plane
+        lensing (lenstronomy): the ray's sky position at each lens plane is
+        recorded.  Together with the (common) source point and the image point
+        at the observer plane, these nodes connect **source → each lens-plane
+        crossing → image point (observer)**, which is exactly the multiple-image
+        raytrace picture.
         """
-        pts = [[self._L, sy, sz]]
-        xs = self._L
-        ys, zs = sy, sz
-        for lens in lenses:
-            x_lens = self._x_of_redshift(lens.redshift, z_max)
-            # Straight-line (fan) position just right of the plane.
-            dx = xs - (x_lens + dw)
-            ya, za = sy + vy * dx, sz + vz * dx
-            pts.append([x_lens + dw, ya, za])
-            # Pull the sky position toward the lens centre.
-            dy = lens.center_y - ya
-            dz = lens.center_x - za
-            dist = max(float(np.hypot(dy, dz)), 1e-3)
-            if lens.model == "NFW":
-                bend = min(abs(lens.alpha_Rs), 1.6)
-            else:
-                bend = min(abs(lens.theta_E), 1.6)
-            yb = ya + (dy / dist) * bend
-            zb = za + (dz / dist) * bend
-            pts.append([x_lens - dw, yb, zb])
-            xs, ys, zs = x_lens - dw, yb, zb
-        # Final leg to the observer along the fan direction.
-        dx = xs - (-self._L)
-        pts.append([-self._L, ys + vy * dx, zs + vz * dx])
-        return _spline_path(pts)
+        thx, thy = float(ra_img), float(dec_img)
+        alx, aly = thx, thy
+        z0 = 0.0
+        nodes = [[self._L, sy, sz]]                      # source plane (right)
+        for z1 in z_lenses:
+            Ts, Te = mp.transverse_distance_start_stop(z0, z1,
+                                                       include_z_start=False)
+            thx_n, thy_n, alx, aly = mp.ray_shooting_partial(
+                thx, thy, alx, aly, z0, z1, kwargs_lens,
+                include_z_start=False, T_ij_start=Ts, T_ij_end=Te)
+            # scene X = lens plane, scene Y = dec, scene Z = ra
+            nodes.append([self._x_of_redshift(z1, z_max), thy_n, thx_n])
+            thx, thy, z0 = thx_n, thy_n, z1
+        nodes.append([-self._L, dec_img, ra_img])        # image point (observer)
+        return nodes
 
-    def _add_rays(self, config):
+    def _add_rays(self, config, result):
+        """One true light path per solved image (plus source & image markers).
+
+        This is the physically real ray-trace: all images of a source share the
+        same source point, are bent at the real lens-plane crossings, and land at
+        their observed image positions at the observer plane — the standard
+        multiple-image diagram.
+        """
         cmap = _SOURCE_COLORS
-        lenses = sorted(config.lenses, key=lambda l: l.redshift)
         z_max = max([l.redshift for l in config.lenses] + [0.3])
+        z_lenses = sorted([l.redshift for l in config.lenses])
+        cosmo = config.cosmology.astropy_cosmo()
 
         self._rays = []
-        markers = []
-        span = 2 * self._L                      # source-observer x distance
+        src_pts, src_cols = [], []
+        img_pts, img_cols = [], []
         for si, source in enumerate(config.sources):
             sy, sz = source.center_y, source.center_x
-            # A fan of rays all leaving the SAME source point, differing only in
-            # initial direction.  The offsets scale to (almost) the same spread
-            # at the observer as before, so the multiple-image pattern is kept.
-            offsets = np.linspace(-0.55, 0.55, self._n_rays)
-            for i, off in enumerate(offsets):
-                vy = off / span                  # spread mostly in y (sky)
-                vz = 0.12 * (i - self._n_rays // 2) / span
-                path = self._ray_path(lenses, z_max, sy, sz, vy, vz)
-                color = cmap[si % len(cmap)] + (1.0,)
+            color = cmap[si % len(cmap)] + (1.0,)
+            src_pts.append([self._L, sy, sz])
+            src_cols.append(color)
+            # Build the same multi-plane lens model the 2D image uses.
+            lens_model, kwargs_lens = lc._get_lens_model(
+                config.lenses, source.redshift, cosmo)
+            mp = lens_model.lens_model
+            if si >= len(result.image_positions):
+                continue
+            ra_arr, dec_arr, _ = result.image_positions[si]
+            for ra_img, dec_img in zip(np.atleast_1d(ra_arr),
+                                       np.atleast_1d(dec_arr)):
+                nodes = self._true_ray_nodes(
+                    mp, kwargs_lens, z_max, z_lenses,
+                    sy, sz, ra_img, dec_img)
+                path = _spline_path(nodes)
                 self._rays.append(
                     visuals.Line(pos=path.astype(np.float32), color=color,
                                  width=2.2, connect="strip",
                                  parent=self.view.scene)
                 )
-            markers.append(([self._L, sy, sz], cmap[si % len(cmap)] + (1.0,)))
-        if markers:
+                img_pts.append([-self._L, float(dec_img), float(ra_img)])
+                img_cols.append(color)
+
+        if src_pts:
             self._markers = visuals.Markers(
-                pos=np.array([m[0] for m in markers]),
-                face_color=np.array([m[1] for m in markers], dtype=np.float32),
-                edge_color=(0.15, 0.15, 0.15, 1), size=6, parent=self.view.scene)
+                pos=np.array(src_pts, dtype=np.float32),
+                face_color=np.array(src_cols, dtype=np.float32),
+                edge_color=(0.15, 0.15, 0.15, 1), size=7,
+                parent=self.view.scene)
+        if img_pts:
+            self._image_markers = visuals.Markers(
+                pos=np.array(img_pts, dtype=np.float32),
+                face_color=np.array(img_cols, dtype=np.float32),
+                edge_color=(1, 1, 1, 1), size=9,
+                parent=self.view.scene)
 
     def _add_point_markers(self, config):
         """Bright point-source markers.
