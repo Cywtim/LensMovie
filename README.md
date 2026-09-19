@@ -17,9 +17,9 @@ Single-window layout:
   plane. Sources are drawn as **extended blobs** sized by their profile radius.
   Each solved **multiple image** gets its own **real light ray**, traced with the
   actual multi-plane lensing: every image's ray leaves the same source point,
-  bends at the true lens-plane crossings, and lands at its observed image point
-  at the observer plane (bright markers) — the standard multiple-image diagram.
-  The default camera is
+  bends at the true lens-plane crossings, and **all rays converge on the single
+  observer point**, with bright markers at each image's first lens-plane crossing
+  (the image plane) — the standard multiple-image diagram. The default camera is
   a side-on view (drag to rotate, scroll to zoom). Rays bend smoothly at each
   lens plane (Catmull-Rom, for display) instead of kinking sharply. **Controls**:
   left-drag rotate, right-drag / scroll zoom, **middle-drag** or **Shift+left-drag**

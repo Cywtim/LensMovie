@@ -265,13 +265,11 @@ class Scene3D:
                         sy, sz, ra_img, dec_img):
         """The REAL light-path nodes for one solved image.
 
-        Starting from the observed image position (ra_img, dec_img), the
-        backwards light cone is traced plane-by-plane with the true multi-plane
+        The backwards light cone is traced plane-by-plane with the true multi-plane
         lensing (lenstronomy): the ray's sky position at each lens plane is
-        recorded.  Together with the (common) source point and the image point
-        at the observer plane, these nodes connect **source → each lens-plane
-        crossing → image point (observer)**, which is exactly the multiple-image
-        raytrace picture.
+        recorded.  Nodes connect **source → each lens-plane crossing → the single
+        observer point**, i.e. all images of a source converge on one observer
+        (x=-L, y=z=0); the images are marked at their first lens-plane crossing.
         """
         thx, thy = float(ra_img), float(dec_img)
         alx, aly = thx, thy
@@ -286,7 +284,8 @@ class Scene3D:
             # scene X = lens plane, scene Y = dec, scene Z = ra
             nodes.append([self._x_of_redshift(z1, z_max), thy_n, thx_n])
             thx, thy, z0 = thx_n, thy_n, z1
-        nodes.append([-self._L, dec_img, ra_img])        # image point (observer)
+        # all rays converge on the single observer point (x=-L, y=z=0)
+        nodes.append([-self._L, 0.0, 0.0])
         return nodes
 
     def _add_rays(self, config, result):
@@ -328,8 +327,13 @@ class Scene3D:
                                  width=2.2, connect="strip",
                                  parent=self.view.scene)
                 )
-                img_pts.append([-self._L, float(dec_img), float(ra_img)])
-                img_cols.append(color)
+                # image point = first lens-plane crossing (the image plane); for
+                # a single (or first) lens plane this is the observed sky pos,
+                # correctly located where the image forms rather than on the
+                # converging observer plane.
+                if len(nodes) >= 3:
+                    img_pts.append(list(nodes[1]))
+                    img_cols.append(color)
 
         if src_pts:
             self._markers = visuals.Markers(

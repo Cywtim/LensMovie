@@ -81,10 +81,8 @@ def test_true_ray_nodes_link_source_lens_plane_and_image(_app):
         for k, z in enumerate(z_lenses):
             assert np.isclose(nodes[k + 1][0],
                               scene._x_of_redshift(z, z_max))
-        # last node = the image point at the observer plane, at sky (ra, dec)
-        assert np.isclose(nodes[-1][0], -scene._L)
-        assert np.isclose(nodes[-1][1], dec_i[0])
-        assert np.isclose(nodes[-1][2], ra_i[0])
+        # last node = the single observer point: every ray converges on x=-L, y=z=0
+        assert np.allclose(nodes[-1], [-scene._L, 0.0, 0.0])
         # the bends are rounded smooth and dense: (n_nodes-1)*22 samples + 1
         path = s3._spline_path(nodes)
         assert len(path) == (len(nodes) - 1) * 22 + 1
@@ -104,6 +102,8 @@ def test_add_rays_draws_one_true_path_per_image(_app):
         pytest.skip(f"no GL context: {exc}")
     try:
         cfg = lc.Config(sources=[lc.SourceParams(center_x=0.12, center_y=0.08)])
+        z_lenses = sorted([l.redshift for l in cfg.lenses])
+        z_max = max(cfg.lenses[0].redshift, 0.3)
         res = lc.compute(cfg)
         scene.update_scene(cfg, res, show_mass_disks=False)
         n_img = len(res.image_positions[0][0])
@@ -115,10 +115,15 @@ def test_add_rays_draws_one_true_path_per_image(_app):
             assert np.isclose(v0[1], src.center_y)    # at the source centre
             assert np.isclose(v0[2], src.center_x)
             vend = np.asarray(ray.pos[-1])
-            assert np.isclose(vend[0], -scene._L)     # lands at the observer plane
-        # image markers sit at the observer plane, one per solved image
+            # every ray converges on the single observer point (x=-L, y=z=0)
+            assert np.allclose(vend, [-scene._L, 0.0, 0.0])
+        # image markers sit at the first lens-plane crossing, one per image
         assert scene._image_markers is not None
         assert len(scene._image_markers._data["a_position"]) == n_img
+        # each image marker stands at the first lens plane's X (= z_lenses[0])
+        x_plane = scene._x_of_redshift(z_lenses[0], z_max)
+        for mpos in scene._image_markers._data["a_position"]:
+            assert np.isclose(mpos[0], x_plane)
     finally:
         scene.close()
 
