@@ -50,7 +50,8 @@ from . import lensing_calc as lc
 from .controller import LensMovieController
 from .controls import (CosmologyPanel, DataBar, DisplayBar, FitBar, LensesPanel,
                        PointSourcesPanel, SourcesPanel)
-from .plotting import CurvesCanvas, ExternalCanvas, FieldCanvas, ImageCanvas
+from .plotting import (CurvesCanvas, ExternalCanvas, FieldCanvas, ImageCanvas,
+                       source_contour as contour)
 
 
 class MainWindow(QMainWindow):
@@ -672,10 +673,15 @@ class MainWindow(QMainWindow):
                 (np.array([s.center_x]), np.array([s.center_y]), i)
                 for i, s in enumerate(config.sources)
             ]
+            source_outlines = [
+                (*contour(s), i)
+                for i, s in enumerate(config.sources)
+            ]
             self.curves_canvas.update_curves(
                 sim.cc_ra, sim.cc_dec, sim.caustic_ra, sim.caustic_dec,
                 num_pix, delta, image_positions=sim.image_positions,
                 source_positions=source_positions,
+                source_outlines=source_outlines,
             )
             # Live sliders while the fit runs (no point-source card rebuild:
             # the count cannot change mid-fit).
@@ -926,11 +932,16 @@ class MainWindow(QMainWindow):
             (np.array([s.center_x]), np.array([s.center_y]), i)
             for i, s in enumerate(config.sources)
         ]
+        source_outlines = [
+            (*contour(s), i)
+            for i, s in enumerate(config.sources)
+        ]
         self.curves_canvas.update_curves(
             result.cc_ra, result.cc_dec, result.caustic_ra, result.caustic_dec,
             num_pix, delta,
             image_positions=result.image_positions,
             source_positions=source_positions,
+            source_outlines=source_outlines,
         )
 
         # Keep an already-loaded external matrix in sync with the display

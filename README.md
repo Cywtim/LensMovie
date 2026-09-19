@@ -116,9 +116,12 @@ Single-window layout:
   - The **image positions** (solved per source, colour-coded by source) are
     overlaid on Fermat potential, Time delay, Lens image and Critical curve —
     all four live in the lens plane.  The Critical-curve panel additionally
-    marks each **source position** with a gold star; it sits in the source
-    plane, next to the caustic.  The curve panel auto-scales to include the
-    markers, so nothing is clipped.
+    marks each **source position** with a gold star and draws each extended
+    source's **own extent ellipse** (effective radius + ellipticity e1/e2) in
+    the source plane, right next to the caustic — a source straddling the
+    caustic is exactly the strongly-magnified / multiple-image regime.  The
+    curve panel auto-scales to include the markers and outlines, so nothing is
+    clipped.
 - **Config panels**:
   - **Cosmology** (top of the config column): the multi-plane background, with
     one slider row per knob — `H0` [km/s/Mpc], `Ωm`, `ΩΛ`, `w0`, `wa` — following

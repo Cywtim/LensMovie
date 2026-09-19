@@ -18,6 +18,27 @@ from PyQt5.QtWidgets import QSizePolicy
 from . import theme
 
 
+def source_contour(source, n=48):
+    """Sampled outline of an extended source on the source plane.
+
+    An ellipse with the source's effective radius and ellipticity (from e1/e2),
+    centred at (center_x, center_y) — the shape to compare against the caustic:
+    a source straddling the caustic gets strongly magnified / extra images.
+    Returns (ra, dec) arrays.
+    """
+    r = float(source.effective_radius()) * 2.0   # readable blob scale
+    r = min(max(r, 0.02), 1.0)
+    e = min(float(np.hypot(source.e1, source.e2)), 0.98)
+    phi = 0.5 * np.arctan2(source.e2, source.e1)
+    a, b = r, r * (1.0 - e)
+    t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    ct, st = np.cos(t), np.sin(t)
+    cb, sb = np.cos(phi), np.sin(phi)
+    ra = source.center_x + a * cb * ct - b * sb * st
+    dec = source.center_y + a * sb * ct + b * cb * st
+    return np.asarray(ra, dtype=float), np.asarray(dec, dtype=float)
+
+
 def _extent(num_pix, delta_pix):
     # Matches lenstronomy's make_grid span so overlays (critical curve, caustic,
     # image positions) line up exactly with the rendered image.
@@ -312,10 +333,13 @@ class CurvesCanvas(_MplCanvas):
         self._ax.grid(True, color=s["grid"], alpha=0.5)
         self._img_markers = []     # image-position circles (lens plane)
         self._src_markers = []     # source-position stars (source plane)
+        self._outline_lines = []   # per-source extent outlines (source plane)
         (self._cc,) = self._ax.plot([], [], lw=1.6, color="cyan", label="critical curve")
         (self._caustic,) = self._ax.plot([], [], lw=1.6, ls="--", color="red", label="caustic")
         (self._src_marker,) = self._ax.plot(
             [], [], self._SOURCE_MARKER, ms=13, mec="k", mfc="gold", label="source")
+        (self._extent_handle,) = self._ax.plot(
+            [], [], lw=1.5, color="gold", alpha=0.85, label="source extent")
         (self._img_marker,) = self._ax.plot(
             [], [], "o", ms=5, mec="k", mfc="w", label="image")
         self._ax.legend(loc="upper right", fontsize=7, framealpha=0.6,
@@ -324,7 +348,7 @@ class CurvesCanvas(_MplCanvas):
 
     def update_curves(self, cc_ra, cc_dec, caustic_ra, caustic_dec,
                       num_pix=None, delta_pix=None, image_positions=(),
-                      source_positions=()):
+                      source_positions=(), source_outlines=()):
         """Draw the curves **auto-scaled to their own extents**.
 
         Deliberately *not* the lens-image grid FOV: a critical curve / caustic
@@ -334,6 +358,9 @@ class CurvesCanvas(_MplCanvas):
         are only used as a fallback when there are no curve points at all.
         Image and source markers are drawn on top and included in the scaling,
         so they can never fall outside the visible window.
+        ``source_outlines`` is [(ra, dec, colour_idx), ...]: each extended
+        source's own extent ellipse on the source plane, to compare against the
+        caustic.
         """
         self._set_curve(self._cc, cc_ra, cc_dec)
         self._set_curve(self._caustic, caustic_ra, caustic_dec)
@@ -342,6 +369,18 @@ class CurvesCanvas(_MplCanvas):
         # The reference source sits in the *source* plane, next to the caustic.
         self._set_markers(source_positions, marker=self._SOURCE_MARKER, ms=13,
                           container=self._src_markers)
+        # Per-source extent ellipses (redrawn each update so stale ones vanish).
+        for line in self._outline_lines:
+            try:
+                line.remove()
+            except Exception:
+                pass
+        self._outline_lines = []
+        for ra, dec, _ci in source_outlines:
+            self._outline_lines.append(
+                self._ax.plot(ra, dec, lw=1.5, color="gold", alpha=0.85,
+                              zorder=3)[0]
+            )
 
         coords = [np.asarray(a, dtype=float)
                   for a in (cc_ra, cc_dec, caustic_ra, caustic_dec)]
@@ -349,6 +388,8 @@ class CurvesCanvas(_MplCanvas):
             xa, ya = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
             if xa.size:
                 coords += [xa, ya]
+        for ra, dec, _ci in source_outlines:
+            coords += [np.asarray(ra, dtype=float), np.asarray(dec, dtype=float)]
         pts = np.concatenate([c for c in coords if c.size]) \
             if any(c.size for c in coords) else None
         if pts is not None and pts.size:
