@@ -972,7 +972,9 @@ class MainWindow(QMainWindow):
         # expensive part (mesh construction + GL upload per update).
         if self.scene3d is not None and self.display_bar.three_d_enabled():
             try:
-                self.scene3d.update_scene(config, result)
+                self.scene3d.update_scene(
+                    config, result,
+                    show_mass_disks=self.display_bar.mass_disks_enabled())
             except Exception as exc:
                 self.statusBar().showMessage(f"3D update error: {exc}", 5000)
 

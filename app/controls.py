@@ -1119,6 +1119,14 @@ class DisplayBar(QWidget):
         self._three_d.setToolTip("Show the 3D scene (uncheck to save resources)")
         self._three_d.toggled.connect(self._emit)
         lay.addWidget(self._three_d)
+        lay.addSpacing(6)
+        self._mass_disks = QCheckBox("mass disks")
+        self._mass_disks.setChecked(True)
+        self._mass_disks.setToolTip(
+            "Show each lens as a translucent mass disk in the 3D scene "
+            "(uncheck to declutter and see the rays alone)")
+        self._mass_disks.toggled.connect(self._emit)
+        lay.addWidget(self._mass_disks)
         lay.addStretch(1)
 
     def _emit(self, *a):
@@ -1126,6 +1134,9 @@ class DisplayBar(QWidget):
 
     def three_d_enabled(self) -> bool:
         return self._three_d.isChecked()
+
+    def mass_disks_enabled(self) -> bool:
+        return self._mass_disks.isChecked()
 
     def display(self) -> dict:
         return {

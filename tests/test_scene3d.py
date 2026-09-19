@@ -174,3 +174,33 @@ def test_update_scene_builds_lens_disks_on_their_planes(_app):
             assert rgba[:, 3].min() >= 0.0 and rgba[:, 3].max() <= 1.0
     finally:
         scene.close()
+
+
+def test_update_scene_respects_show_mass_disks(_app):
+    """show_mass_disks=False drops the lens disks while keeing rays/blobs."""
+    import app.scene3d as s3
+    from app import lensing_calc as lc
+
+    try:
+        scene = s3.Scene3D(size=(200, 120))
+    except Exception as exc:
+        pytest.skip(f"no GL context: {exc}")
+    try:
+        cfg = lc.Config(lenses=[lc.LensParams(model="SIS", theta_E=0.6,
+                                              redshift=0.3)])
+        scene.update_scene(cfg, lc.SimResult(
+            image=np.zeros((10, 10)), fermat=np.zeros((10, 10)),
+            time_delay=np.zeros((10, 10)), cc_ra=np.array([]), cc_dec=np.array([]),
+            caustic_ra=np.array([]), caustic_dec=np.array([]),
+            image_positions=[], num_pix=10, delta_pix=0.05, ref_z_source=1.5),
+            show_mass_disks=True)
+        assert len(scene._lens_disks) == 1
+        scene.update_scene(cfg, lc.SimResult(
+            image=np.zeros((10, 10)), fermat=np.zeros((10, 10)),
+            time_delay=np.zeros((10, 10)), cc_ra=np.array([]), cc_dec=np.array([]),
+            caustic_ra=np.array([]), caustic_dec=np.array([]),
+            image_positions=[], num_pix=10, delta_pix=0.05, ref_z_source=1.5),
+            show_mass_disks=False)
+        assert len(scene._lens_disks) == 0       # stale disks cleared, none rebuilt
+    finally:
+        scene.close()

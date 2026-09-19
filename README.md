@@ -27,7 +27,9 @@ Single-window layout:
 - **Display strip**: grid size (numPix), colormap, log/linear stretch, and a
   **3D scene toggle**. Unchecking 3D stops rendering the scene (only the black
   background area remains — the layout does not reflow) and skips rebuilding it,
-  which saves the per-update mesh construction / GL upload cost.
+  which saves the per-update mesh construction / GL upload cost. A sibling
+  **mass disks** toggle (on by default) hides just the translucent lens disks in
+  the 3D scene when you want to read the rays on their own.
 - **External image panel** (tall strip at the right of the window, spanning the
   3D bar / display row / fit strip): load your own lensed-image matrix with
   **Load image…** and it is drawn with the same colormap/stretch. Supported

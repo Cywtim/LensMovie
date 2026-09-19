@@ -152,8 +152,13 @@ class Scene3D:
                                          font_size=12, parent=self.view.scene))
 
     # ------------------------------------------------------------------ update
-    def update_scene(self, config: lc.Config, result: lc.SimResult):
-        """Rebuild the edge-on scene from the current config and result."""
+    def update_scene(self, config: lc.Config, result: lc.SimResult,
+                     show_mass_disks: bool = True):
+        """Rebuild the edge-on scene from the current config and result.
+
+        ``show_mass_disks`` lets the caller hide the translucent lens disks
+        (e.g. to declutter the rays); rays and source blobs are always drawn.
+        """
         for v in (self._rays, self._markers, self._blobs,
                   self._lens_disks, self._point_markers):
             items = v if isinstance(v, list) else [v]
@@ -171,9 +176,10 @@ class Scene3D:
 
         # One translucent mass disk per lens, on its own lens plane (matched to
         # where the rays bend below).
-        for li, lens in enumerate(sorted(config.lenses,
-                                         key=lambda l: l.redshift)):
-            self._lens_disks.append(self._make_lens_disk(lens, li, z_max))
+        if show_mass_disks:
+            for li, lens in enumerate(sorted(config.lenses,
+                                             key=lambda l: l.redshift)):
+                self._lens_disks.append(self._make_lens_disk(lens, li, z_max))
 
         # One extended source blob per source, on the source plane.
         for si, source in enumerate(config.sources):

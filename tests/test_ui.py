@@ -1879,3 +1879,16 @@ def test_chain_preview_button_and_dialog(qapp):
         dlg.close()
         win.close()
         win.deleteLater()
+
+
+def test_display_bar_mass_disk_toggle(qapp):
+    """The display row has a 'mass disks' toggle (default on) that gates the 3D
+    lens disks via mass_disks_enabled()."""
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    assert win.display_bar.mass_disks_enabled() is True
+    win.display_bar._mass_disks.setChecked(False)
+    assert win.display_bar.mass_disks_enabled() is False
+    win.close()
+    win.deleteLater()
