@@ -277,10 +277,11 @@ class ImageCanvas(_MplCanvas):
         self._style_axes("Lens image")
         self._im = None
         self._markers = []
+        self._cc_lines = []
         self._cb = None
 
     def update_image(self, image, num_pix, delta_pix, image_positions,
-                     colormap="magma", stretch="log"):
+                     colormap="magma", stretch="log", critical_curve=()):
         data = np.asarray(image, dtype=float)
         if stretch == "log" and data.min() >= 0:
             vmin = max(data.max() * 1e-5, np.finfo(float).eps)
@@ -311,6 +312,22 @@ class ImageCanvas(_MplCanvas):
             if len(x):
                 (mk,) = self._ax.plot(x, y, "o", ms=5, mec="k", mfc=self._IMG_COLORS[i % 8])
                 self._markers.append(mk)
+
+        # Overlay the critical curve(s) on the image: where it runs is where
+        # arcs / rings / multiple images concentrate on the sky.
+        for line in self._cc_lines:
+            try:
+                line.remove()
+            except Exception:
+                pass
+        self._cc_lines = []
+        ra, dec = critical_curve if len(critical_curve) == 2 else ((), ())
+        ra, dec = np.asarray(ra, dtype=float), np.asarray(dec, dtype=float)
+        if ra.size:
+            (cc,) = self._ax.plot(ra, dec, lw=1.0, color="cyan", alpha=0.9,
+                                  zorder=4)
+            self._cc_lines.append(cc)
+
         self._ax.set_aspect("equal", adjustable="box")
         self.draw_idle()
 

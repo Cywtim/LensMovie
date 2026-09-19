@@ -73,3 +73,23 @@ def test_curves_canvas_draws_source_outlines(qapp):
     assert lo < -0.1 - r                 # ... and the whole ellipse visible
     canvas._style_axes("x")
     canvas.close()
+
+
+def test_image_canvas_overlays_critical_curve(qapp):
+    """update_image draws the critical curve on top of the lens image, and
+    drops it (stale overlay removed) when the next update has no curve."""
+    from app.plotting import ImageCanvas
+
+    canvas = ImageCanvas()
+    img = np.random.RandomState(0).uniform(0.1, 1.0, (40, 40))
+    cc = (np.linspace(-1, 1, 40), np.linspace(1, -1, 40))
+    canvas.update_image(img, 40, 0.05, [], colormap="magma", stretch="linear",
+                        critical_curve=cc)
+    assert len(canvas._cc_lines) == 1
+    x, y = canvas._cc_lines[0].get_data()
+    assert np.allclose(x, cc[0]) and np.allclose(y, cc[1])
+
+    # next update without a critical curve clears the overlay
+    canvas.update_image(img, 40, 0.05, [], colormap="magma", stretch="linear")
+    assert len(canvas._cc_lines) == 0
+    canvas.close()

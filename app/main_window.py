@@ -666,6 +666,7 @@ class MainWindow(QMainWindow):
                 self._lens_image_with_noise(sim.image, num_pix, delta),
                 num_pix, delta, sim.image_positions,
                 colormap=display["colormap"], stretch=display["stretch"],
+                critical_curve=(sim.cc_ra, sim.cc_dec),
             )
             self.delay_canvas.update_field(
                 sim.time_delay, num_pix, delta, colormap=display["colormap"],
@@ -933,6 +934,7 @@ class MainWindow(QMainWindow):
             self._lens_image_with_noise(result.image, num_pix, delta),
             num_pix, delta, result.image_positions,
             colormap=display["colormap"], stretch=display["stretch"],
+            critical_curve=(result.cc_ra, result.cc_dec),
         )
         self.delay_canvas.update_field(
             result.time_delay, num_pix, delta,

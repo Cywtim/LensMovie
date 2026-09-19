@@ -114,11 +114,14 @@ Single-window layout:
 - **Lower half — a 2-row x 3-column grid**:
   | | col 1 | col 2 | col 3 |
   |---|---|---|---|
-  | row 1 | Fermat potential (+ image positions) | Lens image (+ image positions) | **Lenses** config |
+  | row 1 | Fermat potential (+ image positions) | Lens image (+ image positions, critical curve) | **Lenses** config |
   | row 2 | Time delay (+ image positions) | Critical curve + caustic (+ image positions, source star) | **Sources / points** config |
   - The **image positions** (solved per source, colour-coded by source) are
     overlaid on Fermat potential, Time delay, Lens image and Critical curve —
-    all four live in the lens plane.  The Critical-curve panel additionally
+    all four live in the lens plane.  The **Lens image** panel also draws the
+    **critical curve** (cyan) on top of the image, so you see at a glance where
+    arcs / rings / multiple images concentrate on the sky.  The Critical-curve
+    panel additionally
     marks each **source position** with a gold star and draws each extended
     source's **own extent ellipse** (effective radius + ellipticity e1/e2) in
     the source plane, right next to the caustic — a source straddling the
