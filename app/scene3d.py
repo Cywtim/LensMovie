@@ -12,8 +12,9 @@ Coordinate convention (a genuine side / edge-on view):
     right-to-left    at each lens plane
 
   * the line of sight runs along **X** (horizontal and wider than tall);
-  * the sky (angular) coordinates are **Y** and **Z** — each lens is a mass
-    disk lying in the y-z plane, centred at (x_lens, 0, 0);
+  * the sky (angular) coordinates are **Y** and **Z** — each lens is drawn as a
+    translucent mass disk lying in the y-z plane on its own lens plane, centred
+    at (x_lens, 0, 0) plus the lens's sky offset, sized by its Einstein radius;
   * x_lens is scaled by the lens redshift between the observer (-x) and the
     source (+x), so lenses at higher redshift sit closer to the source;
   * light rays travel from the source side (+x) to the observer side (-x),
@@ -41,6 +42,12 @@ from . import lensing_calc as lc
 _SOURCE_COLORS = [
     (1.0, 0.6, 0.2), (0.2, 1.0, 0.6), (0.4, 0.8, 1.0),
     (1.0, 0.4, 0.9), (0.9, 0.9, 0.3),
+]
+
+# One dim colour per lens, used for its translucent mass disk on the lens plane.
+_LENS_COLORS = [
+    (0.62, 0.55, 0.95), (0.95, 0.62, 0.55), (0.55, 0.85, 0.78),
+    (0.93, 0.82, 0.45), (0.72, 0.62, 0.5),
 ]
 
 
@@ -107,6 +114,7 @@ class Scene3D:
 
         self._rays = []
         self._blobs = []
+        self._lens_disks = []
         self._markers = None
         self._point_markers = None
         self._add_axes()
@@ -147,7 +155,7 @@ class Scene3D:
     def update_scene(self, config: lc.Config, result: lc.SimResult):
         """Rebuild the edge-on scene from the current config and result."""
         for v in (self._rays, self._markers, self._blobs,
-                  self._point_markers):
+                  self._lens_disks, self._point_markers):
             items = v if isinstance(v, list) else [v]
             for item in items:
                 if item is not None:
@@ -156,9 +164,16 @@ class Scene3D:
                     except Exception:
                         pass
         self._rays, self._markers, self._blobs = [], None, []
+        self._lens_disks = []
         self._point_markers = None
 
         z_max = max([l.redshift for l in config.lenses] + [0.3])
+
+        # One translucent mass disk per lens, on its own lens plane (matched to
+        # where the rays bend below).
+        for li, lens in enumerate(sorted(config.lenses,
+                                         key=lambda l: l.redshift)):
+            self._lens_disks.append(self._make_lens_disk(lens, li, z_max))
 
         # One extended source blob per source, on the source plane.
         for si, source in enumerate(config.sources):
@@ -178,6 +193,31 @@ class Scene3D:
         f = max(0.0, min(1.0, z / z_max))
         margin = 0.55
         return -self._L * margin + f * (2 * self._L * margin)
+
+    # ------------------------------------------------------- lens mass disks
+    def _make_lens_disk(self, lens, index, z_max):
+        """A translucent mass disk on the lens plane, lying in the (y,z) sky plane.
+
+        The radius follows the deflector's Einstein radius (theta_E — or
+        alpha_Rs for an NFW halo), so strengthening the lens visibly grows the
+        disk; it sits at the lens centre and redshift, exactly where the rays
+        bend.  Deliberately dim/greyed: this is the *mass*, not light.
+        """
+        radius = _lens_disk_radius(lens)
+        x = self._x_of_redshift(lens.redshift, z_max)
+        positions, faces, rr = _lens_disk_geometry(lens.center_y,
+                                                   lens.center_x, radius)
+        positions[:, 0] = x                        # move onto the lens plane
+        base = _LENS_COLORS[index % len(_LENS_COLORS)]
+        shade = (1.0 - 0.6 * rr)[:, None]
+        rgb = (np.array(base)[None, :] * shade).astype(np.float32)
+        # Soft halo: core a bit more opaque, edge fades away.
+        alpha = (0.14 + 0.26 * (1.0 - 0.8 * rr))[:, None].astype(np.float32)
+        rgba = np.concatenate([rgb, alpha], axis=-1)
+        mesh = visuals.Mesh(vertices=positions, faces=faces, vertex_colors=rgba,
+                            shading="smooth", parent=self.view.scene)
+        mesh.set_gl_state(blend=True, depth_test=True)
+        return mesh
 
     # ------------------------------------------------------- extended source
     def _make_source_blob(self, source, index):
@@ -304,6 +344,36 @@ class Scene3D:
             self.canvas.close()
         except Exception:
             pass
+
+
+def _lens_disk_radius(lens) -> float:
+    """The mass disk's sky-plane radius from the deflector's Einstein scale.
+
+    NFW halos are sized by ``alpha_Rs`` (their deflection scale), every other
+    profile by ``theta_E``; a 1.5× factor keeps the disk readable next to the
+    rays, clamped so tiny/huge lenses never degenerate the mesh.
+    """
+    base = abs(lens.alpha_Rs) if lens.model == "NFW" else abs(lens.theta_E)
+    return min(max(1.5 * base, 0.10), 1.3)
+
+
+def _lens_disk_geometry(center_y, center_z, radius, n_edge=28, n_ring=6):
+    """A disk mesh lying in the y-z sky plane at x=0.
+
+    Returns ``(positions, faces, rings)``: vertices (N,3) with X left at 0 (the
+    caller places the disk on the lens plane), triangle faces, and the per-ring
+    radii that drive the core→rim shading — same polar-grid construction as the
+    source blob.
+    """
+    t = np.linspace(0, 2 * np.pi, n_edge, endpoint=False)
+    r = np.linspace(0, radius, n_ring)
+    T, R = np.meshgrid(t, r)
+    Y = center_y + R * np.cos(T)
+    Z = center_z + R * np.sin(T)
+    X = np.zeros_like(Y)
+    positions = np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1).astype(np.float32)
+    faces = _grid_faces(*R.shape)
+    return positions, faces, R.ravel()
 
 
 def _grid_faces(nx, ny):

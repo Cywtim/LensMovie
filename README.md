@@ -11,8 +11,11 @@ Single-window layout:
 - **Top — 3D scene** (Vispy, GPU), full width and **edge-on** along the line of
   sight: `observer --------- lens plane(s) --------- source`. Lenses sit along
   the line of sight by their redshift (balanced so observer / lenses / source are
-  evenly spaced); light rays bend in the sky plane at each lens plane. Sources are
-  drawn as **extended blobs** sized by their profile radius. The default camera is
+  evenly spaced), each drawn as a **translucent mass disk** on its own lens plane
+  — sized by its Einstein radius (θ_E, or α_Rs for an NFW halo), offset by its
+  sky centre, and fading core→rim; light rays bend in the sky plane at each lens
+  plane. Sources are drawn as **extended blobs** sized by their profile radius.
+  The default camera is
   a side-on view (drag to rotate, scroll to zoom). Rays bend smoothly at each
   lens plane (Catmull-Rom, for display) instead of kinking sharply. **Controls**:
   left-drag rotate, right-drag / scroll zoom, **middle-drag** or **Shift+left-drag**

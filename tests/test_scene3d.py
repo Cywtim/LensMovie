@@ -111,3 +111,66 @@ def test_pan_camera_translates_center_on_a_horizontal_drag():
     assert delta[0] != 0, "horizontal drag did not pan the camera"
     # for a purely horizontal drag the x (line-of-sight) component dominates
     assert abs(delta[0]) > abs(delta[2])
+
+
+# ----------------------------------------------------------------- lens disks
+def test_lens_disk_radius_follows_einstein_radius():
+    """A mass disk scales with the deflector's Einstein scale: theta_E for
+    isothermal/power-law profiles, alpha_Rs for an NFW halo, clamped both ends."""
+    import app.scene3d as s3
+    from app import lensing_calc as lc
+
+    sis = lc.LensParams(model="SIS", theta_E=1.0)
+    assert s3._lens_disk_radius(sis) == pytest.approx(1.3)     # 1.5×1.0, clamped
+    weak = lc.LensParams(model="SIS", theta_E=0.02)
+    assert s3._lens_disk_radius(weak) == pytest.approx(0.10)   # tiny lens floor
+    nfw = lc.LensParams(model="NFW", theta_E=5.0, alpha_Rs=0.6)
+    assert s3._lens_disk_radius(nfw) == pytest.approx(0.9)     # uses alpha_Rs, not θ_E
+
+
+def test_lens_disk_geometry_lies_in_the_sky_plane():
+    """The disk mesh sits in the y-z plane (x=0), centred on the lens, with
+    valid faces and a finite ring-radius drive for the shading."""
+    import app.scene3d as s3
+
+    pos, faces, rings = s3._lens_disk_geometry(0.2, -0.1, 0.8)
+    assert np.allclose(pos[:, 0], 0.0)                         # sky (y-z) plane
+    assert np.isclose(pos[:, 1].max(), 0.2 + 0.8, atol=1e-4)
+    assert np.isclose(pos[:, 1].min(), 0.2 - 0.8, atol=1e-4)
+    assert np.isclose(pos[:, 2].max(), -0.1 + 0.8, atol=1e-4)
+    assert pos[:, 1].min() >= 0.2 - 0.8 - 1e-4
+    assert faces.min() >= 0 and faces.max() < len(pos)
+    assert rings.min() == 0.0 and rings.max() == pytest.approx(0.8)
+
+
+def test_update_scene_builds_lens_disks_on_their_planes(_app):
+    """Each lens gets one translucent disk, parked at that lens's redshift-xyz."""
+    import app.scene3d as s3
+    from app import lensing_calc as lc
+
+    try:
+        scene = s3.Scene3D(size=(200, 120))
+    except Exception as exc:
+        pytest.skip(f"no GL context: {exc}")
+    try:
+        cfg = lc.Config(lenses=[
+            lc.LensParams(model="SIS", theta_E=0.6, redshift=0.3),
+            lc.LensParams(model="SIS", theta_E=0.9, redshift=0.9),
+        ])
+        scene.update_scene(cfg, lc.SimResult(
+            image=np.zeros((10, 10)), fermat=np.zeros((10, 10)),
+            time_delay=np.zeros((10, 10)), cc_ra=np.array([]), cc_dec=np.array([]),
+            caustic_ra=np.array([]), caustic_dec=np.array([]),
+            image_positions=[], num_pix=10, delta_pix=0.05, ref_z_source=1.5))
+        assert len(scene._lens_disks) == 2
+        z_max = 0.9
+        for disk, lens in zip(scene._lens_disks, sorted(cfg.lenses,
+                                                        key=lambda l: l.redshift)):
+            x_lens = scene._x_of_redshift(lens.redshift, z_max)
+            verts = disk.mesh_data.get_vertices()
+            assert np.allclose(verts[:, 0], x_lens)          # on the lens plane
+            rgba = disk.mesh_data.get_vertex_colors()
+            assert rgba.shape[1] == 4                        # translucent RGBA halo
+            assert rgba[:, 3].min() >= 0.0 and rgba[:, 3].max() <= 1.0
+    finally:
+        scene.close()
