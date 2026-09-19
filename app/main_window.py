@@ -669,10 +669,18 @@ class MainWindow(QMainWindow):
         # no-op while a parameter is fixed).
         self._apply_fitted_config(result.config)
 
-        self.fit_bar.set_status(
-            f"\u03c7\u00b2 {result.chi2_before:.4g} \u2192 {result.chi2_after:.4g}"
-            f"   ({result.n_free} free, ndof {result.ndof})"
-        )
+        # The raw χ² is a per-pixel sum, so it grows with the grid (150×150 →
+        # ≈22 500 at the noise floor); the *reduced* χ²ν is the grid- and
+        # noise-independent figure of merit, and the diagnostic says when it
+        # departs from ≈1 and why.
+        base = (f"\u03c7\u00b2 {result.chi2_before:.4g} \u2192 {result.chi2_after:.4g}"
+                f"   ({result.n_free} free, ndof {result.ndof})")
+        if result.ok:
+            base += f"   \u03c7\u00b2\u03bd {result.reduced_chi2:.3g}"
+            hint = result.noise_hint()
+            if hint:
+                base += f"  \u26a0 {hint}"
+        self.fit_bar.set_status(base)
         self.statusBar().showMessage(
             f"fit done: chi2 {result.chi2_before:.4g} -> {result.chi2_after:.4g}", 6000
         )
@@ -692,11 +700,7 @@ class MainWindow(QMainWindow):
             locked = self._lock_all_unlocked()
             extra = f"  \u2713 good fit (\u03c7\u00b2\u03bd {result.reduced_chi2:.4g}"
             extra += f" \u2264 {threshold:.4g}) \u2014 locked {locked} parameter(s)"
-            self.fit_bar.set_status(
-                f"\u03c7\u00b2 {result.chi2_before:.4g}"
-                f" \u2192 {result.chi2_after:.4g}"
-                f"   ({result.n_free} free, ndof {result.ndof})" + extra
-            )
+            self.fit_bar.set_status(base + extra)
             self.statusBar().showMessage(
                 f"fit good (\u03c7\u00b2\u03bd {result.reduced_chi2:.4g}"
                 f" \u2264 {threshold:.4g}): locked {locked} parameter(s)", 6000

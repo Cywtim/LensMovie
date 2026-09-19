@@ -42,6 +42,11 @@ Single-window layout:
   best-fit values are written back into the sliders, the strip reports
   `χ² initial → best (free, ndof) + reduced χ²ν`, and the external data panel
   can show **best-fit model** or **residual** through its mode selector.
+  The raw χ² is a per-pixel sum and grows with the grid (150×150 → ≈22 500 even
+  for a perfect model), so judge fits by the **reduced χ²ν ≈ 1**.  When χ²ν
+  clearly departs from 1 the strip appends a ⚠ diagnostic: χ²ν≫1 usually means
+  the noise σ is underestimated / the PSF error map is missing / a model
+  component is missing; χ²ν≪1 means σ is overestimated.
   The strip also has an optional **stop χ²ν** control (default off): when enabled,
   a restart that reaches the target reduced chi² halts the swarm and skips the
   remaining restarts instead of burning iterations on an already-converged fit.

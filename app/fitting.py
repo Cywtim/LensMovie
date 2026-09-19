@@ -67,6 +67,28 @@ class FitResult:
     def improved(self) -> bool:
         return self.ok and self.chi2_after < self.chi2_before
 
+    def noise_hint(self) -> str:
+        """A one-line read of the reduced χ², or "" when it is noise-consistent.
+
+        The raw χ² is a per-pixel sum over ``ndof`` pixels, so its absolute size
+        grows with the grid (150×150 → ≈22 500 even for a perfect model).  What
+        matters is the *reduced* χ² ≈ χ²/ndof: ≈1 means the residuals match the
+        assumed noise; ≫1 means the residuals exceed it (noise σ underestimated,
+        PSF error not folded in, or a model component missing); ≪1 means σ is
+        overestimated.  This returns a short hint in the outlier cases.
+        """
+        ndof, rv = self.ndof, self.reduced_chi2
+        if not self.ok or ndof <= 0 or not np.isfinite(rv):
+            return ""
+        if rv > 1.3:
+            return (f"\u03c7\u00b2\u03bd {rv:.2f} > 1.3 \u2014 residuals exceed the "
+                    "assumed noise: check the noise \u03c3 / PSF error map, or a "
+                    "missing model component")
+        if rv < 0.7:
+            return (f"\u03c7\u00b2\u03bd {rv:.2f} < 0.7 \u2014 residuals smaller than "
+                    "the assumed noise: the noise \u03c3 may be overestimated")
+        return ""
+
 
 def _to_param_info(spec: dict) -> dict:
     """Normalise a card spec into {name: ParamInfo}."""

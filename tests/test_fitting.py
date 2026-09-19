@@ -729,3 +729,40 @@ def test_run_pso_cosmology_free_single_plane_no_regression():
     # the chain records the free cosmology axis
     assert "cosmo.H0" in res.chain
     assert len(res.chain["cosmo.H0"]) == len(res.chain_iter)
+
+
+def test_reduced_chi2_noise_hint():
+    """noise_hint() reads the reduced χ²: silent near 1, actionable hints away
+    from it (the raw χ² alone grows with the grid and is not comparable)."""
+    ok = ft.FitResult(ok=True, chi2_before=10.0, chi2_after=10.0, ndof=100,
+                      reduced_chi2=1.03)
+    assert ok.noise_hint() == ""
+
+    big = ft.FitResult(ok=True, ndof=22500, reduced_chi2=3.96)
+    assert "σ" in big.noise_hint() or "sigma" in big.noise_hint()
+    assert "PSF" in big.noise_hint()
+
+    tiny = ft.FitResult(ok=True, ndof=22500, reduced_chi2=0.25)
+    assert "overestimated" in tiny.noise_hint()
+
+    bad = ft.FitResult(ok=False, ndof=22500, reduced_chi2=50.0)
+    assert bad.noise_hint() == ""
+
+
+def test_run_pso_reports_reduced_chi2_and_noise_diagnostic():
+    """A finished fit carries a reduced χ² ≈ 1 at the noise floor, and the
+    diagnostic stays silent there — so a 150×150 'big' χ² is seen as fine."""
+    truth = _truth_config()
+    data = _data_for(truth)
+    lens_s, ll_s, src_s = _specs(
+        lc.Config(lenses=truth.lenses, sources=truth.sources,
+                  num_pix=truth.num_pix, delta_pix=truth.delta_pix),
+        free_lens=("theta_E",))
+    start = lc.Config(lenses=truth.lenses, sources=truth.sources,
+                      num_pix=truth.num_pix, delta_pix=truth.delta_pix)
+    res = ft.run_pso(start, data, lens_s, ll_s, src_s,
+                     n_particles=20, n_iterations=40, n_restarts=1, polish=False)
+    assert res.ok, res.error
+    assert res.ndof == 60 * 60 - res.n_free     # usable pixels minus free params
+    assert abs(res.reduced_chi2 - 1.0) < 0.2
+    assert res.noise_hint() == ""

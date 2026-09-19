@@ -1754,3 +1754,22 @@ def test_lock_all_unlocked_includes_cosmology(qapp):
     assert win._lock_all_unlocked() == 0     # nothing left unlocked anywhere
     win.close()
     win.deleteLater()
+
+
+def test_fit_finished_status_shows_reduced_chi2_and_diagnostic(qapp):
+    """After a fit the strip shows the grid-independent reduced χ²ν, and warns
+    when it departs from 1 (here: σ underestimated → ~4× residuals)."""
+    from app import fitting as ft
+    from app.main_window import MainWindow
+
+    win = MainWindow()
+    cfg = win._build_config()
+    r = ft.FitResult(ok=True, config=cfg, chi2_before=25000.0, chi2_after=89000.0,
+                     n_free=1, ndof=22500, reduced_chi2=3.96)
+    win._fit_finished(r)
+    status = win.fit_bar._status.text()
+    assert "χ²ν" in status
+    assert "3.96" in status
+    assert "PSF" in status or "residual" in status or "noise" in status
+    win.close()
+    win.deleteLater()
