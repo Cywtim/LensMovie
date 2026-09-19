@@ -50,9 +50,10 @@ def test_spline_path_smooths_a_sharp_kink():
     assert np.degrees(turn.max()) < 30, "corner not smoothed"
 
 
-def test_ray_path_in_a_lens_bends_smoothly(_app):
-    """A real single-lens light ray is a smooth path (not a sharp kink at the
-    lens plane) that still deflects toward the lens centre."""
+def test_ray_path_emits_from_source_centre_and_deflects(_app):
+    """A light ray leaves the source centre and fans by *direction*, then
+    deflects toward the lens centre (numeric interior: the spline smoothness
+    itself is covered by test_spline_path_smooths_a_sharp_kink)."""
     import app.scene3d as s3
     from app import lensing_calc as lc
 
@@ -63,27 +64,45 @@ def test_ray_path_in_a_lens_bends_smoothly(_app):
     try:
         cfg = lc.Config()                       # SIS θ_E=1 at z=0.5, source at z=1.5
         z_max = max([l.redshift for l in cfg.lenses] + [0.3])
-        path = scene._ray_path(list(cfg.lenses), z_max,
-                               sy=0.0, sz=0.0, y0=0.0, z0=0.2)
 
-        # dense (4 control points → 67 samples); 3rd-lens count scales it
+        # launched from the centre with a small z fan
+        no_lens_z = 0.3 * (2 * scene._L)         # undeflected z-spread at observer
+        path = scene._ray_path(list(cfg.lenses), z_max,
+                               sy=0.0, sz=0.0, vy=0.0, vz=0.3)
+
+        # dense; every ray leaves the SAME source point (the centre)
         assert len(path) >= 60
-        # endpoints pinned to the source / observer planes
-        assert np.isclose(path[0, 0], scene._L)
+        assert np.allclose(path[0], [scene._L, 0.0, 0.0])
         assert np.isclose(path[-1, 0], -scene._L)
 
-        # no sharp corner anywhere along the ray
-        seg = path[1:] - path[:-1]
-        n = np.linalg.norm(seg, axis=1)
-        d = seg[n > 1e-6] / n[n > 1e-6, None]
-        turn = np.arccos(np.clip(np.einsum("ij,ij->i", d[:-1], d[1:]), -1, 1))
-        assert np.degrees(turn.max()) < 20, "ray still kinks at the lens plane"
+        # the lens pulls the ray toward z=0 (deflects it), so it arrives at the
+        # observer with less z excursion than the free (no-lens) fan
+        assert 0.0 < abs(path[-1, 2]) < no_lens_z - 0.1
+    finally:
+        scene.close()
 
-        # the ray bends toward the lens centre in (z): from +0.2 toward/through 0
-        # (starting oﬀ-axis, the θ_E-sized deflection carries it past the centre)
-        assert path[-1, 2] < path[0, 2] > 0
-        # y is unchanged — the lens sits at y=0 and the ray started on y=0
-        assert np.isclose(path[-1, 1], path[0, 1])
+
+def test_add_rays_all_leave_the_source_together(_app):
+    """Every ray of one source starts at the same point — the source centre —
+    and only differs by its initial direction (the fan)."""
+    import app.scene3d as s3
+    from app import lensing_calc as lc
+
+    try:
+        scene = s3.Scene3D(size=(200, 120))
+    except Exception as exc:
+        pytest.skip(f"no GL context: {exc}")
+    try:
+        cfg = lc.Config(sources=[lc.SourceParams(center_x=0.1, center_y=-0.2)])
+        scene._n_rays = 5
+        scene._add_rays(cfg)
+        # each of the 5 rays starts at the source centre (center_y, center_x)
+        assert len(scene._rays) == 5
+        for ray in scene._rays:
+            v0 = ray.pos[0]
+            assert np.isclose(v0[0], scene._L)
+            assert np.isclose(v0[1], -0.2)      # center_y
+            assert np.isclose(v0[2], 0.1)       # center_x
     finally:
         scene.close()
 

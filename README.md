@@ -14,7 +14,10 @@ Single-window layout:
   evenly spaced), each drawn as a **translucent mass disk** on its own lens plane
   — sized by its Einstein radius (θ_E, or α_Rs for an NFW halo), offset by its
   sky centre, and fading core→rim; light rays bend in the sky plane at each lens
-  plane. Sources are drawn as **extended blobs** sized by their profile radius.
+  plane. Sources are drawn as **extended blobs** sized by their profile radius,
+  and their **rays all leave the source together** — they fan out in slightly
+  different sky directions from the same emitting point, then bend at each lens
+  and re-split at the observer into the multiple-image pattern.
   The default camera is
   a side-on view (drag to rotate, scroll to zoom). Rays bend smoothly at each
   lens plane (Catmull-Rom, for display) instead of kinking sharply. **Controls**:

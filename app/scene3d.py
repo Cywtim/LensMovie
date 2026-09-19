@@ -260,35 +260,43 @@ class Scene3D:
         return mesh
 
     # ------------------------------------------------------------------ rays
-    def _ray_path(self, lenses, z_max, sy, sz, y0, z0, dw=0.22):
-        """One light ray's smooth 3-D path from the source to the observer.
+    def _ray_path(self, lenses, z_max, sy, sz, vy, vz, dw=0.22):
+        """One light ray emitted from the **source centre**, fanning out with an
+        initial sky direction (vy, vz) (offset per unit x).
 
-        Control points: source plane → (arrive / leave) per lens → observer
-        plane, with each arrive/leave pair spread ``dw`` to either side of the
-        formal lens plane so the Catmull-Rom spline *rounds* the kink into a
-        smooth bend instead of a sharp corner.  This is for **display**: the
-        per-lens deflection magnitudes and directions are unchanged — only the
-        transition is smoothed (a ray would physically turn sharply at a plane).
+        All rays of a source start at the same point (sy, sz) on the source plane
+        — light leaving a source — and differ only by their initial direction.
+        Each leg propagates straight; at a lens plane the ray's sky position is
+        pulled toward the lens centre by an Einstein-scale ``bend`` (a parallel-
+        shift display bend, exactly the geometry the previous version used, so
+        the multi-image shape is preserved).  The arrive/leave pair ``dw`` either
+        side of the plane lets the Catmull-Rom spline round the kink into a
+        smooth bend.
         """
-        ys, zs = y0, z0
-        pts = [[self._L, ys, zs]]                    # source plane (right)
+        pts = [[self._L, sy, sz]]
+        xs = self._L
+        ys, zs = sy, sz
         for lens in lenses:
             x_lens = self._x_of_redshift(lens.redshift, z_max)
-            dy = lens.center_y - ys
-            dz = lens.center_x - zs
+            # Straight-line (fan) position just right of the plane.
+            dx = xs - (x_lens + dw)
+            ya, za = sy + vy * dx, sz + vz * dx
+            pts.append([x_lens + dw, ya, za])
+            # Pull the sky position toward the lens centre.
+            dy = lens.center_y - ya
+            dz = lens.center_x - za
             dist = max(float(np.hypot(dy, dz)), 1e-3)
-            # Bend scale per model: an NFW halo's deflection is set by alpha_Rs,
-            # all isothermal/power-law profiles by theta_E.
             if lens.model == "NFW":
                 bend = min(abs(lens.alpha_Rs), 1.6)
             else:
                 bend = min(abs(lens.theta_E), 1.6)
-            ys2 = ys + (dy / dist) * bend
-            zs2 = zs + (dz / dist) * bend
-            pts.append([x_lens + dw, ys, zs])        # arrive (before bend)
-            pts.append([x_lens - dw, ys2, zs2])      # leave  (after bend)
-            ys, zs = ys2, zs2
-        pts.append([-self._L, ys, zs])               # observer plane (left)
+            yb = ya + (dy / dist) * bend
+            zb = za + (dz / dist) * bend
+            pts.append([x_lens - dw, yb, zb])
+            xs, ys, zs = x_lens - dw, yb, zb
+        # Final leg to the observer along the fan direction.
+        dx = xs - (-self._L)
+        pts.append([-self._L, ys + vy * dx, zs + vz * dx])
         return _spline_path(pts)
 
     def _add_rays(self, config):
@@ -298,13 +306,17 @@ class Scene3D:
 
         self._rays = []
         markers = []
+        span = 2 * self._L                      # source-observer x distance
         for si, source in enumerate(config.sources):
             sy, sz = source.center_y, source.center_x
+            # A fan of rays all leaving the SAME source point, differing only in
+            # initial direction.  The offsets scale to (almost) the same spread
+            # at the observer as before, so the multiple-image pattern is kept.
             offsets = np.linspace(-0.55, 0.55, self._n_rays)
             for i, off in enumerate(offsets):
-                y0 = sy + off
-                z0 = sz + 0.12 * (i - self._n_rays // 2)
-                path = self._ray_path(lenses, z_max, sy, sz, y0, z0)
+                vy = off / span                  # spread mostly in y (sky)
+                vz = 0.12 * (i - self._n_rays // 2) / span
+                path = self._ray_path(lenses, z_max, sy, sz, vy, vz)
                 color = cmap[si % len(cmap)] + (1.0,)
                 self._rays.append(
                     visuals.Line(pos=path.astype(np.float32), color=color,
