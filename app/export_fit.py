@@ -6,7 +6,8 @@ with matplotlib / csv.  The figures reuse the app's dark canvas theme so what is
 saved looks like what is on screen.
 
 Exportable artefacts:
-  * ``save_fit_report_png``  — data | model | residual report PNG (±χ²),
+  * ``save_fit_report_png``  — data | model | residual | per-pixel χ² report PNG
+    (± the reduced-χ²ν diagnostic; the χ² panel needs a noise map),
   * ``save_chain_csv``       — the parameter chain as rows (iteration, χ², free…),
   * ``save_chain_png``       — per-parameter trajectories over the fit.
 """
@@ -46,20 +47,42 @@ def _extent(num_pix: int, delta_pix: float):
 
 
 def save_fit_report_png(path: str, data, result) -> str:
-    """Write the data | model | residual report to ``path`` (PNG)."""
+    """Write the data | model | residual | per-pixel χ² report to ``path`` (PNG).
+
+    The χ²-map panel needs a noise map; without one the report falls back to
+    data | model | residual.  The title also carries the noise-consistency
+    diagnostic (reduced χ²ν ≫1/≪1) as a second line when it fires.
+    """
+    from .fit_data import effective_noise
+
     image = np.asarray(data.image, dtype=float)
     model = np.asarray(result.model, dtype=float)
     residual = np.asarray(result.residual, dtype=float)
+    eff = effective_noise(data)
 
     with matplotlib.rc_context(_dark_rc()):
-        fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.4))
+        if eff is None:
+            vmax = float(np.nanmax(np.abs(residual))) or 1.0
+            fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.4))
+            panels = [
+                (axes[0], image, "magma", None, "data"),
+                (axes[1], model, "magma", None, "model"),
+                (axes[2], residual, "RdBu_r", (-vmax, vmax), "model − data"),
+            ]
+        else:
+            chi2map = ((image - model) / eff) ** 2
+            if data.mask is not None:
+                chi2map = np.where(np.asarray(data.mask, dtype=bool),
+                                   chi2map, np.nan)
+            fig, axes = plt.subplots(1, 4, figsize=(18.0, 4.4))
+            vmax = float(np.nanmax(np.abs(residual))) or 1.0
+            panels = [
+                (axes[0], image, "magma", None, "data"),
+                (axes[1], model, "magma", None, "model"),
+                (axes[2], residual, "RdBu_r", (-vmax, vmax), "model − data"),
+                (axes[3], chi2map, "viridis", None, "per-pixel χ²"),
+            ]
         extent = _extent(data.num_pix, data.delta_pix)
-        vmax = float(np.abs(residual).max()) or 1.0
-        panels = [
-            (axes[0], image, "magma", None, "data"),
-            (axes[1], model, "magma", None, "model"),
-            (axes[2], residual, "RdBu_r", (-vmax, vmax), "model − data"),
-        ]
         for ax, arr, cmap, clim, title in panels:
             im = ax.imshow(arr, origin="lower", extent=extent,
                            cmap=cmap, interpolation="nearest")
@@ -71,12 +94,14 @@ def save_fit_report_png(path: str, data, result) -> str:
             ax.tick_params(labelsize=7)
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03) \
                 .ax.tick_params(labelsize=7)
-        fig.suptitle(
-            f"LensMovie fit — χ²: {result.chi2_before:.4g} → {result.chi2_after:.4g}"
-            f"    reduced χ²ν {result.reduced_chi2:.4g}"
-            f"    free: {result.n_free}    ndof: {result.ndof}",
-            fontsize=10,
-        )
+        title = (f"LensMovie fit — χ²: {result.chi2_before:.4g}"
+                 f" → {result.chi2_after:.4g}"
+                 f"    reduced χ²ν {result.reduced_chi2:.4g}"
+                 f"    free: {result.n_free}    ndof: {result.ndof}")
+        hint = result.noise_hint()
+        if hint:
+            title += "\n" + hint
+        fig.suptitle(title, fontsize=10)
         fig.tight_layout(rect=(0, 0, 1, 0.94))
         fig.savefig(path, dpi=150)
         plt.close(fig)

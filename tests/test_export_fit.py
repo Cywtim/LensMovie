@@ -120,3 +120,45 @@ def test_save_all_writes_three_files(tmp_path):
     assert set(out) == {"report", "chain_csv", "chain_png"}
     for p in out.values():
         assert tmp_path.joinpath(p).name and tmp_path.joinpath(p).stat().st_size > 0
+
+
+def test_report_falls_back_to_three_panels_without_noise(tmp_path):
+    """Without a noise map the χ² panel has no σ to divide by, so the report
+    degrades gracefully back to data | model | residual."""
+    data = fd.FitData(image=np.arange(16, dtype=float).reshape(4, 4),
+                      delta_pix=0.1)                       # no noise map
+    res = _result_with_chain()
+    p = exp.save_fit_report_png(str(tmp_path / "r_nonoise.png"), data, res)
+    assert tmp_path.joinpath("r_nonoise.png").stat().st_size > 1000
+
+
+def test_report_includes_chi2_panel_and_diagnostic(tmp_path, monkeypatch):
+    """With a noise map the report grows to 4 images (including the per-pixel
+    χ² panel) and the title carries the noise-consistency diagnostic."""
+    import matplotlib.pyplot as plt
+
+    real_subplots = plt.subplots
+    captured = {}
+
+    def spy_subplots(nrows, ncols, *a, **k):
+        fig, axs = real_subplots(nrows, ncols, *a, **k)
+        captured["nimages"] = len(axs)
+        orig = fig.suptitle
+        fig.suptitle = lambda t, *aa, **kk: (captured.__setitem__("title", t)
+                                             or orig(t, *aa, **kk))
+        return fig, axs
+
+    monkeypatch.setattr("matplotlib.pyplot.subplots", spy_subplots)
+
+    data = fd.FitData(image=np.arange(16, dtype=float).reshape(4, 4),
+                      noise=np.ones((4, 4)), delta_pix=0.1)
+    model = np.ones((4, 4))
+    res = ft.FitResult(ok=True, model=model, residual=data.image - model,
+                       chi2_before=90.0, chi2_after=160.0, n_free=2, ndof=10,
+                       reduced_chi2=4.0)
+    exp.save_fit_report_png(str(tmp_path / "r4.png"), data, res)
+
+    assert captured["nimages"] == 4
+    assert "χ²" in captured["title"] and "PSF" in captured["title"] or "noise" \
+        in captured["title"]
+    assert tmp_path.joinpath("r4.png").stat().st_size > 1000
